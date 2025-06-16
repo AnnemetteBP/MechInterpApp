@@ -126,22 +126,39 @@ layout = dbc.Container([
                 multi=True,
                 className="form-select"
             ),
-        ], width=6),
+        ], width=4),
         dbc.Col([
             html.Label("model_precision"),
             dcc.Dropdown(
                 id="model-precision-0",
                 options=[
                     {"label":"None","value":""},
-                    {"label":"float16","value":"float16"},
-                    {"label":"bfloat16","value":"bfloat16"},
-                    {"label":"float32","value":"float32"},
+                    {"label":"PTDQ 8-bit","value":"ptdq8bit"},
+                    {"label":"PTDQ 4-bit","value":"ptdq4bit"},
+                    {"label":"PTSQ 8-bit","value":"ptsq8bit"},
+                    {"label":"PTSQ 4-bit","value":"ptsq4bit"},
                 ],
                 value="",
                 clearable=False,
                 className="form-select"
             ),
-        ], width=6),
+        ], width=4),
+        dbc.Col([
+            html.Label("model_precision"),
+            dcc.Dropdown(
+                id="model-precision-00",
+                options=[
+                    {"label":"None","value":""},
+                    {"label":"PTDQ 8-bit","value":"ptdq8bit"},
+                    {"label":"PTDQ 4-bit","value":"ptdq4bit"},
+                    {"label":"PTSQ 8-bit","value":"ptsq8bit"},
+                    {"label":"PTSQ 4-bit","value":"ptsq4bit"},
+                ],
+                value="",
+                clearable=False,
+                className="form-select"
+            ),
+        ], width=4),
     ], className="mb-4"),
 
     # Graph row

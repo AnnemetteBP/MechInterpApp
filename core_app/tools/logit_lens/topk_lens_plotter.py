@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import torch
 import numpy as np
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import scipy.special
 from scipy.stats import wasserstein_distance
 from scipy.special import kl_div
@@ -655,16 +655,43 @@ def _topk_logit_lens_fig(
 
 # cache so we don’t re-load on every callback
 @lru_cache(maxsize=2)
-def _load_model_tokenizer(model_id:str, tok_id:str):
+def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
     tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        return_dict=True,
-        output_hidden_states=True,
-        low_cpu_mem_usage=True,
-        use_safetensors=True,
-        trust_remote_code=True
-    )
+
+    if quant_config:
+        if '4' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
+                bnb_4bit_quant_type='nf4',       # or 'fp4'
+                #bnb_4bit_compute_dtype='float16'
+            )
+        elif '8' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                #bnb_4bit_compute_dtype='float16'
+            )
+        
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            quantization_config=bnb_config,
+            device_map='auto',
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+
     return model, tok
 
 def plot_topk_logit_lens(
@@ -693,12 +720,12 @@ def plot_topk_logit_lens(
     top_down:bool=False,
     verbose:bool=False,
     pad_to_max_length:bool=False,
-    model_precision:Optional[torch.dtype|None]=None
+    model_precision:Optional[str|None]=None
 ) -> go.Figure:
   
-    model, tokenizer = _load_model_tokenizer(model_path, tokenizer_path)
-    if model_precision:
-        model = model.to(model_precision)
+    model, tokenizer = _load_model_tokenizer(model_path, tokenizer_path, model_precision)
+    """if model_precision:
+        model = model.to(model_precision)"""
 
     rank_matrix_raw = None
     pred_ranks = None

@@ -130,14 +130,15 @@ layout = dbc.Container([
             ),
         ], width=6),
         dbc.Col([
-            html.Label("model_precision"),
+            html.Label("bnb_config"),
             dcc.Dropdown(
                 id="model-precision",
                 options=[
                     {"label":"None","value":""},
-                    {"label":"float16","value":"float16"},
-                    {"label":"bfloat16","value":"bfloat16"},
-                    {"label":"float32","value":"float32"},
+                    {"label":"PTDQ 8-bit","value":"ptdq8bit"},
+                    {"label":"PTDQ 4-bit","value":"ptdq4bit"},
+                    {"label":"PTSQ 8-bit","value":"ptsq8bit"},
+                    {"label":"PTSQ 4-bit","value":"ptsq4bit"},
                 ],
                 value="",
                 clearable=False,
@@ -196,10 +197,6 @@ def update_logit_lens(
     pad_to_max_length    = "pad_to_max_length" in flags
     topk_mean            = "topk_mean" in flags
 
-    precision = None
-    if model_precision:
-        precision = getattr(torch, model_precision)
-
     try:
         return topk_lens_plotter.plot_topk_logit_lens(
             model_path           = model_id,
@@ -226,7 +223,7 @@ def update_logit_lens(
             top_down             = top_down,
             verbose              = verbose,
             pad_to_max_length    = pad_to_max_length,
-            model_precision      = precision
+            model_precision      = model_precision
         ) or go.Figure()
     except Exception as e:
         return go.Figure().add_annotation(
