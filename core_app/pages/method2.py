@@ -128,7 +128,7 @@ layout = dbc.Container([
             ),
         ], width=4),
         dbc.Col([
-            html.Label("model_precision"),
+            html.Label("bnb_config"),
             dcc.Dropdown(
                 id="model-precision-0",
                 options=[
@@ -144,7 +144,7 @@ layout = dbc.Container([
             ),
         ], width=4),
         dbc.Col([
-            html.Label("model_precision"),
+            html.Label("bnb_config"),
             dcc.Dropdown(
                 id="model-precision-00",
                 options=[
@@ -189,6 +189,8 @@ layout = dbc.Container([
       Input("label-font-size-0", "value"),
       Input("flags-0",           "value"),
       Input("decoder-layers-0",  "value"),
+      Input("model-precision-0", "value"),
+      Input("model-precision-00", "value"),
     ]
 )
 def update_logit_lens(
@@ -198,7 +200,7 @@ def update_logit_lens(
     text,
     start_ix, end_ix, top_k, metric,
     block_step, token_font_size, label_font_size,
-    flags, decoder_layers
+    flags, decoder_layers, model_precision_1, model_precision_2
 ):
     if not n or not text:
         return go.Figure()
@@ -237,6 +239,8 @@ def update_logit_lens(
             top_down             = top_down,
             verbose              = verbose,
             pad_to_max_length    = pad_to_max_length,
+            model_precision_1    = model_precision_1,
+            model_precision_2    = model_precision_2
         ) or go.Figure()
     except Exception as e:
         return go.Figure().add_annotation(

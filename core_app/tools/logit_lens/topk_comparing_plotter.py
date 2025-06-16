@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import torch
 import numpy as np
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 import matplotlib as mpl
 import scipy.special
@@ -412,16 +412,43 @@ def _topk_comparing_lens_fig(
 
 # cache so we don’t re-load on every callback
 @lru_cache(maxsize=2)
-def _load_model_tokenizer(model_id:str, tok_id:str):
+def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
     tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        return_dict=True,
-        output_hidden_states=True,
-        low_cpu_mem_usage=True,
-        use_safetensors=True,
-        trust_remote_code=True
-    )
+
+    if quant_config:
+        if '4' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
+                bnb_4bit_quant_type='nf4',       # or 'fp4'
+                #bnb_4bit_compute_dtype='float16'
+            )
+        elif '8' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                #bnb_4bit_compute_dtype='float16'
+            )
+        
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            quantization_config=bnb_config,
+            device_map='auto',
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+
     return model, tok
 
 
@@ -445,7 +472,9 @@ def plot_topk_comparing_lens(
     decoder_layer_names:List=['norm', 'lm_head'],
     top_down:bool=False,
     verbose:bool=False,
-    pad_to_max_length:bool=False
+    pad_to_max_length:bool=False,
+    model_precision_1:Optional[str|None]=None,
+    model_precision_2:Optional[str|None]=None
 )-> go.Figure:
     
     import torch._dynamo
@@ -479,8 +508,8 @@ def plot_topk_comparing_lens(
 
         return layer_names_1, layer_names_2
     
-    model_1, tokenizer_1 = _load_model_tokenizer(model_1, tokenizer_1)
-    model_2, tokenizer_2 = _load_model_tokenizer(model_2, tokenizer_2)
+    model_1, tokenizer_1 = _load_model_tokenizer(model_1, tokenizer_1, model_precision_1)
+    model_2, tokenizer_2 = _load_model_tokenizer(model_2, tokenizer_2, model_precision_2)
 
     layer_names_1, layer_names_2 = multiple_layer_names(model_1=model_1, model_2=model_2)
 
