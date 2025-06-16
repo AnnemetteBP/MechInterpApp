@@ -475,7 +475,7 @@ def plot_topk_comparing_lens(
     pad_to_max_length:bool=False,
     model_precision_1:Optional[str|None]=None,
     model_precision_2:Optional[str|None]=None
-)-> go.Figure:
+) -> go.Figure:
     
     import torch._dynamo
     torch._dynamo.config.suppress_errors = True

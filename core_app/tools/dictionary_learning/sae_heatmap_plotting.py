@@ -7,13 +7,20 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 import numpy as np
 import plotly.graph_objects as go
 
+from functools import lru_cache
+
 from .sae_class import SAE
 from .sae_hooks import get_layer_activations
 
+
+def clear_cuda_cache():
+    """Clear GPU cache to avoid memory errors during operations"""
+    torch.cuda.empty_cache()
 
 def clean_token(token: str) -> str:
     if token.startswith("Ġ"):
@@ -29,7 +36,7 @@ def _plot_token_heatmap(
     top_k:int=5,
     saliency:torch.Tensor|None=None,
     tokens_per_row:int=12,
-) -> None:
+) -> go.Figure:
     num_tokens = len(tokens)
     token_feature_matrix = feature_token_matrix.T  # [num_tokens x top_k_features]
 
@@ -99,24 +106,19 @@ def _plot_token_heatmap(
         paper_bgcolor="white"
     )
 
-    fig.show()
+    return fig
 
 
 def _run_multi_layer_sae(
         model:Any,
         tokenizer:Any,
         text:str,
-        plot_sae:bool=False,
-        do_log:bool=False,
         top_k:int=5,
         tokens_per_row:int=12,
         target_layers:List[int]=[5,10,15],
         model_to_eval:bool=True,
-        deterministic_sae:bool=True,
-        log_path:str|None=None,
-        log_name:str|None=None,
-        fig_path:str|None=None    
-) -> Dict:
+        deterministic_sae:bool=True,   
+) -> go.Figure:
     """ Run multi-layer SAE analysis """
 
     if model_to_eval:
@@ -151,75 +153,88 @@ def _run_multi_layer_sae(
         topk_indices = total_per_feature.topk(top_k).indices
         feature_token_matrix = codes[:, topk_indices].abs().T  # shape: [top_k x num_tokens]
 
-        if plot_sae:
-            _plot_token_heatmap(
-                tokens=tokens,
-                feature_token_matrix=feature_token_matrix,
-                top_k=top_k,
-                saliency=saliency,
-                tokens_per_row=tokens_per_row
+        fig = _plot_token_heatmap(
+            tokens=tokens,
+            feature_token_matrix=feature_token_matrix,
+            top_k=top_k,
+            saliency=saliency,
+            tokens_per_row=tokens_per_row
+        )
+
+    return fig
+
+
+# cache so we don’t re-load on every callback
+@lru_cache(maxsize=2)
+def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
+    tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
+
+    if quant_config:
+        if '4' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
+                bnb_4bit_quant_type='nf4',       # or 'fp4'
+                #bnb_4bit_compute_dtype='float16'
             )
+        elif '8' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                #bnb_4bit_compute_dtype='float16'
+            )
+        
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            quantization_config=bnb_config,
+            device_map='auto',
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
 
-        if do_log:
-            try:
-                os.makedirs(log_path, exist_ok=True)
-                safe_log_name = log_name.replace(':', '_').replace('/', '_').replace(' ', '_') if log_name else "log"
-
-                # Convert tensors to lists for JSON serialization
-                hidden_list = hidden.detach().cpu().tolist()
-                codes_list = codes.detach().cpu().tolist()
-                sae_dict_list = sae.decoder.weight.detach().cpu().tolist()
-
-                # Save each as JSON
-                with open(os.path.join(log_path, f"{safe_log_name}_ha_ml_L{layer_idx}.json"), 'w', encoding='utf-8') as f:
-                    json.dump(hidden_list, f, ensure_ascii=False, indent=2)
-
-                with open(os.path.join(log_path, f"{safe_log_name}_cc_ml_L{layer_idx}.json"), 'w', encoding='utf-8') as f:
-                    json.dump(codes_list, f, ensure_ascii=False, indent=2)
-
-                with open(os.path.join(log_path, f"{safe_log_name}_sae_dict_ml_L{layer_idx}.json"), 'w', encoding='utf-8') as f:
-                    json.dump(sae_dict_list, f, ensure_ascii=False, indent=2)
-
-                with open(os.path.join(log_path, f"{safe_log_name}_tokens_ml_L{layer_idx}.json"), 'w', encoding='utf-8') as f:
-                    json.dump(tokens, f, ensure_ascii=False, indent=2)
-
-            except Exception as e:
-                print(f"[ERROR] Logging failed at layer {layer_idx}: {e}")
-
+    return model, tok
 
 def plot_sae_heatmap(
-        model:Any,
-        tokenizer:Any,
+        model_path:Any,
+        tokenizer_path:Any,
         inputs:Any,
-        plot_sae:bool=False,
-        do_log:bool=False,
+        model_precision:Optional[str|None]=None,
         top_k:int=5,
         tokens_per_row:int=12,
         target_layers:List[int]=[5,10,15],
         model_to_eval:bool=True,
         deterministic_sae:bool=True,
-        log_path:str|None=None,
-        log_name:str|None=None,
-        fig_path:str|None=None
+        token_font_size:int=12,
+        label_font_size:int=20,
 ) -> None:
     """
     Run multi-layer SAE analysis
     eval() to disable dropout and uses running statistics for batch norm instead of batch-wise statistics.
     This ensures the model behaves consistently during evaluation or inference (e.g., stable activations for SAE), not training.
     """
+    model, tokenizer = _load_model_tokenizer(model_path, tokenizer_path, model_precision)
 
-    _run_multi_layer_sae(
+    fig = _run_multi_layer_sae(
         model=model,
         tokenizer=tokenizer,
         text=inputs,
-        plot_sae=plot_sae,
-        do_log=do_log,
         top_k=top_k,
         tokens_per_row=tokens_per_row,
         target_layers=target_layers,
         model_to_eval=model_to_eval,
         deterministic_sae=deterministic_sae,
-        log_path=log_path,
-        log_name=log_name,
-        fig_path=fig_path
     )
+
+    clear_cuda_cache()
+    return fig

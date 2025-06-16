@@ -13,17 +13,20 @@ app.title = "Mech Interp Dashboard"
 import core_app.pages.dashboard
 import core_app.pages.method1
 import core_app.pages.method2
+import core_app.pages.method3
 
 routes = {
     "Home":               "/",
     "TopK-N Logit Lens":  "/method1",
     "TopK-N Comparing Lens":  "/method2",
+    "SAE Saliency Heatmap":  "/method3",
 }
 
 views = {
     "/":        core_app.pages.dashboard.layout,
     "/method1": core_app.pages.method1.layout,
     "/method2": core_app.pages.method2.layout,
+    "/method3": core_app.pages.method3.layout,
 }
 
 nav = dbc.NavbarSimple(
