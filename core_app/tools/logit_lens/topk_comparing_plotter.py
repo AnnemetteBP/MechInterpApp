@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 import torch
 import numpy as np
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import matplotlib as mpl
 import scipy.special
 from scipy.stats import wasserstein_distance
 from scipy.special import kl_div
 #import colorcet  # noqa
+from functools import lru_cache
 import plotly.graph_objects as go
 from ..util.python_utils import make_print_if_verbose
 
@@ -215,7 +217,7 @@ def nwd(p, q, axis=-1, clip=1e-6):  # <-- Increase clip
     return distances / vocab_size
 
 
-def _plot_logit_lens_plotly(
+def _topk_comparing_lens_fig(
     layer_logits,
     layer_preds,
     layer_probs,
@@ -234,7 +236,7 @@ def _plot_logit_lens_plotly(
     block_step:int=1,
     token_font_size:int=12,
     label_font_size:int=20,
-):
+)-> go.Figure:
     
     num_layers, num_tokens, vocab_size = layer_logits.shape
     end_ix = start_ix + num_tokens
@@ -304,6 +306,25 @@ def _plot_logit_lens_plotly(
 
     # Compare prediction tokens to correct next tokens
     is_correct = (pred_tokens_str == correct_tokens_matrix)
+    # Decode input tokens for the token span
+    input_tokens_str = [tokenizer.decode([tid]) for tid in input_ids[0][start_ix:end_ix]]
+    input_tokens_matrix = np.tile(input_tokens_str, (pred_tokens_str.shape[0], 1))
+
+    # A mask: for each (layer, token), is this just echoing the input?
+    echo_mask = (pred_tokens_str == input_tokens_matrix)
+
+    # For each token position, find whether earlier layers ONLY echoed input
+    for j in range(echo_mask.shape[1]):  # loop over token positions
+        # If any previous layer (above current one) predicted something else, keep it
+        for i in range(1, echo_mask.shape[0]):
+            if not echo_mask[i - 1, j]:
+                # a prior non-echo happened, so from here on allow it even if it's an echo again
+                echo_mask[i:, j] = False
+                break
+
+    # Filter: suppress only those that are still pure echoes
+    is_correct = is_correct & ~echo_mask
+
 
     # Flip for correct top-to-bottom layer visualization
     value_matrix = value_matrix[::-1]
@@ -386,14 +407,30 @@ def _plot_logit_lens_plotly(
         margin=dict(l=20, r=10, t=40, b=10),
     )
 
-    fig.show()
+    return fig
+
+
+# cache so we don’t re-load on every callback
+@lru_cache(maxsize=2)
+def _load_model_tokenizer(model_id:str, tok_id:str):
+    tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        return_dict=True,
+        output_hidden_states=True,
+        low_cpu_mem_usage=True,
+        use_safetensors=True,
+        trust_remote_code=True
+    )
+    return model, tok
 
 
 def plot_topk_comparing_lens(
-    models:Tuple[Any, Any],
-    #tokenizer:Any,
-    tokenizers:Tuple[Any, Any],
-    inputs:Union[str, List[str], None],
+    model_1:Any,
+    model_2:Any,
+    tokenizer_1:Any,
+    tokenizer_2:Any,
+    inputs:Union[str, List[str], None]|str,
     start_ix:int,
     end_ix:int,
     topk:int=5,
@@ -409,61 +446,17 @@ def plot_topk_comparing_lens(
     top_down:bool=False,
     verbose:bool=False,
     pad_to_max_length:bool=False
-):
-    """
-    Draws "comparing logit lens" plots, and generalizations thereof.
-
-    For background, see
-        https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens
-        https://jalammar.github.io/hidden-states/
-        nostalgebraist plotting tool: https://github.com/nostalgebraist/transformer-utils
-
-    `model`, `tokenizer` and `input_ids` should be familiar from the transformers library.  Other args are
-     documented below.
-
-    `model` should be a `transformers.PreTrainedModel` with an `lm_head`, e.g. `AutoModelForCausalLM`. This implementation works for LLaMAs, OLMos
-
-    Note that using `start_ix` and `end_ix` is not equivalent to passed an `input_ids` sliced like `input_ids[start_ix:end_ix]`.  The LM will see the entire input you pass in as `input_ids`, no matter how you set `start_ix` and `end_ix`.  These "ix" arguments only control what is _displayed_.
-
-    The boolean arguments `js`. The options are:
-
-        - Logits (the default plot type, if `js` is False):
-            - cell color: NWD between two model's topk-1 or mean topk-n probability distributions for next token preds. Clipped to range [0,1]
-            - cell text:  top-1 token prediction at each layer and hover to show topk-n token preds
-
-        - JS:
-            - cell color: JS divergence between two model's topk-1 or mean topk-n probability distributions for next token preds. Clipped to range [0,1]
-            - cell text:  top-1 token prediction at each layer and hover to show topk-n token preds
-        
-
-    `include_subblocks` and `decoder_layer_names` allow the creation of plots that go beyond what was done
-    in the original blog post.  See below for details
-
-    Arguments:
-
-        nwd:
-            draw a "nwd" plot
-            draw a "js" plot (overrides `nwd`)
-        block_step:
-            stride when choosing blocks to plot, e.g. block_step=2 skips every other block
-        decoder_layer_names:
-            defines the subset of the model used to "decode" hidden states.
-
-            The default value `['final_layernorm', 'lm_head']` corresponds to the ordinary "logit lens," where
-            we decode each layer's output as though it were the output of the final block.
-
-            Prepending one or more of the last layers of the model, e.g. `['h11', 'final_layernorm', 'lm_head']` for GPT2, LLaMA: ['norm', 'lm_head']
-            for a 12-layer model, will treat these layers as part of the decoder.  In the general case, this is equivalent
-            to dropping different subsets of interior layers and watching how the output varies.
-    """
+)-> go.Figure:
     
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
     metric_type = None
 
-    # Handle input format and ensure it's a list of prompts
     if isinstance(inputs, str):
         inputs = [inputs]
     elif inputs is None:
-        inputs = ["What is y if y=2*2-4+(3*2)"]  # Default prompt
+        inputs = ["What is y if y=2*2-4+(3*2)"] 
 
     def multiple_layer_names(model_1:Any, model_2:Any) -> Tuple[List[str], List[str]]:
         layer_names_1 = make_layer_names(
@@ -486,9 +479,8 @@ def plot_topk_comparing_lens(
 
         return layer_names_1, layer_names_2
     
-
-    model_1, model_2 = models # first is true distribution and second is e.g., quantized model for comparison
-    tokenizer_1, tokenizer_2 = tokenizers # first is true distribution and second is e.g., quantized model for comparison
+    model_1, tokenizer_1 = _load_model_tokenizer(model_1, tokenizer_1)
+    model_2, tokenizer_2 = _load_model_tokenizer(model_2, tokenizer_2)
 
     layer_names_1, layer_names_2 = multiple_layer_names(model_1=model_1, model_2=model_2)
 
@@ -499,19 +491,17 @@ def plot_topk_comparing_lens(
         model_2, start_ix=start_ix, end_ix=end_ix, layer_names=layer_names_2, decoder_layer_names=decoder_layer_names, verbose=verbose
     )
 
-    # Tokenize inputs with padding control
     input_ids_1 = text_to_input_ids(tokenizer_1, inputs, model_1, pad_to_max_length=pad_to_max_length)
     input_ids_1 = input_ids_1.to(next(model_1.parameters()).device)
     input_ids_2 = text_to_input_ids(tokenizer_2, inputs, model_2, pad_to_max_length=pad_to_max_length)
     input_ids_2 = input_ids_1.to(next(model_2.parameters()).device)
-    #input_ids_2 = input_ids
-    # Extract ground truth next-token IDs (shifted input_ids)
 
     # Get logits
     layer_logits_1, layer_names_1 = collect_logits(model_1, input_ids_1, layer_names_1, decoder_layer_names)
     layer_logits_2, _ = collect_logits(model_2, input_ids_2, layer_names_2, decoder_layer_names)
     layer_logits_1 = safe_cast_logits(torch.tensor(layer_logits_1)).numpy()
     layer_logits_2 = safe_cast_logits(torch.tensor(layer_logits_2)).numpy()
+    
     # Get predictions/probabilities
     layer_preds_1, layer_probs_1, _ = postprocess_logits_topk(layer_logits_1, top_n=topk)
     layer_preds_2, layer_probs_2, _ = postprocess_logits_topk(layer_logits_2, top_n=topk)
@@ -571,7 +561,7 @@ def plot_topk_comparing_lens(
             value_matrix = nwd(layer_probs_1, layer_probs_2)
 
     # Plot using model 1’s annotations and divergence matrix
-    _plot_logit_lens_plotly(
+    fig = _topk_comparing_lens_fig(
         layer_logits=layer_logits_2,  # Use model 2's logits
         layer_preds=layer_preds_2,    # Use model 2's predictions
         layer_probs=layer_probs_2,   # Use model 2's probabilities
@@ -593,3 +583,4 @@ def plot_topk_comparing_lens(
     )
 
     clear_cuda_cache()
+    return fig

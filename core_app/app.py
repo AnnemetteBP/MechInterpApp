@@ -8,19 +8,22 @@ app = Dash(
     external_stylesheets=[dbc.themes.FLATLY],
 )
 server = app.server
-app.title = "Interpretability Dashboard"
+app.title = "Mech Interp Dashboard"
 
 import core_app.pages.dashboard
 import core_app.pages.method1
+import core_app.pages.method2
 
 routes = {
     "Home":               "/",
     "TopK-N Logit Lens":  "/method1",
+    "TopK-N Comparing Lens":  "/method2",
 }
 
 views = {
     "/":        core_app.pages.dashboard.layout,
     "/method1": core_app.pages.method1.layout,
+    "/method2": core_app.pages.method2.layout,
 }
 
 nav = dbc.NavbarSimple(
@@ -28,7 +31,7 @@ nav = dbc.NavbarSimple(
         dbc.NavItem(dbc.NavLink(label, href=path, active="exact"))
         for label, path in routes.items()
     ],
-    brand="Mech. Interp.",
+    brand="Mech. Interp. Toolkit",
     color="dark",
     dark=True,
     fluid=True,

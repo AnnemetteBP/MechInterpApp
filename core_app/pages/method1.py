@@ -1,105 +1,160 @@
 from dash import html, dcc, Input, Output
 import plotly.graph_objects as go
-from core_app.app import app
+import dash_bootstrap_components as dbc
 import torch
-
-# import the module (so we call module.function)
+from core_app.app import app
 from ..tools.logit_lens import topk_lens_plotter
 
-layout = html.Div([
-    html.H2("The TopK-N Logit Lens"),
-    dcc.Input(id="model-id", placeholder="model (e.g. LLaMA / OLMo)", value="NousResearch/DeepHermes-3-Llama-3-3B-Preview"),
-    dcc.Input(id="tokenizer-id", placeholder="tokenizer", value="NousResearch/DeepHermes-3-Llama-3-3B-Preview"),
-    #dcc.Textarea(id="input-text", placeholder="Your prompt here: e.g., What is y if y=2*2-4+(3*2)", style={"width":"100%","height":80}),
-    # Prompt and slicing
-    html.Div([
-        html.Label("Prompt:"),
-        dcc.Textarea(id="input-text", placeholder="Your prompt here: e.g., What is y if y=2*2-4+(3*2)", style={"width":"100%","height":80}),
-    ], style={"margin-bottom":"1em"}),
-    html.Div([
-        html.Label("Start Index:"), 
-        dcc.Input(id="start-ix",  type="number", value=0, style={"width":"6em"}),
-        html.Label("End Index:", style={"margin-left":"2rem"}), 
-        dcc.Input(id="end-ix",    type="number", value=10, style={"width":"6em"}),
-        html.Label("Top-K:", style={"margin-left":"2rem"}), 
-        dcc.Input(id="top-k",      type="number", value=5, style={"width":"6em"}),
-    ], style={"margin-bottom":"1em"}),
+layout = dbc.Container([
 
-    # Metric selector
-    html.Div([
-        html.Label("Metric:"),
-        dcc.Dropdown(
-            id="metric-type",
-            options=[
-                {"label":"Logits","value":"logits"},
-                {"label":"Probs","value":"probs"},
-                {"label":"Entropy","value":"entropy"},
-                {"label":"KL Div","value":"kl"},
-                {"label":"Cosine Sim","value":"cosine_sims"},
-                {"label":"KL layer","value":"kl_layerwise"},
-                {"label":"Tok variety","value":"token_variety"},
-                {"label":"Ranks","value":"ranks"},
-            ],
-            value="logits",
-            clearable=False,
-            style={"width":"300px"}
-        )
-    ], style={"margin-bottom":"1em"}),
+    html.H2("🔍 TopK-N Logit Lens", className="mb-4"),
 
-    # Advanced parameters
-    html.H4("Advanced settings"),
-    html.Div([
-        html.Label("block_step:"), dcc.Input(id="block-step", type="number", value=1, style={"width":"4em"}),
-        html.Label(" token_font_size:", style={"margin-left":"1em"}), dcc.Input(id="token-font-size", type="number", value=12, style={"width":"4em"}),
-        html.Label(" label_font_size:", style={"margin-left":"1em"}), dcc.Input(id="label-font-size", type="number", value=20, style={"width":"4em"}),
-    ], style={"margin-bottom":"0.5em"}),
+    # Model & Tokenizer row
+    dbc.Row([
+        dbc.Col([
+            html.Label("Model ID/Path"),
+            dcc.Input(id="model-id", value="DHL3B/DHL3B-model", className="form-control"),
+        ], width=6),
+        dbc.Col([
+            html.Label("Tokenizer ID/Path"),
+            dcc.Input(id="tokenizer-id", value="DHL3B/DHL3B-tokenizer", className="form-control"),
+        ], width=6),
+    ], className="mb-3"),
 
-    html.Div([
-        dcc.Checklist(
-            id="flags",
-            options=[
-                {"label":"include_input","value":"include_input"},
-                {"label":"force_include_output","value":"force_include_output"},
-                {"label":"include_subblocks","value":"include_subblocks"},
-                {"label":"top_down","value":"top_down"},
-                {"label":"verbose","value":"verbose"},
-                {"label":"pad_to_max_length","value":"pad_to_max_length"},
-                {"label":"Mean Top-K","value":"topk_mean"},            # ← new
-            ],
-            value=["include_input","force_include_output","topk_mean"],  # default includes it
-            inline=True,
-            inputStyle={"margin-right":"4px","margin-left":"12px"}
-        )
-    ], style={"margin-bottom":"1em"}),
+    # Prompt row
+    dbc.Row([
+        dbc.Col([
+            html.Label("Prompt"),
+            dcc.Textarea(
+                id="input-text",
+                placeholder="Your prompt here: e.g., What is y if y=2*2-4+(3*2)",
+                value="the cat cat is on the mat mat",
+                className="form-control",
+                style={"height": "80px"}
+            ),
+        ], width=12),
+    ], className="mb-3"),
 
-    html.Div([
-        html.Label("decoder_layer_names:"),
-        dcc.Dropdown(
-            id="decoder-layers",
-            options=[{"label":nm,"value":nm} for nm in ["norm","lm_head"]],
-            value=["norm","lm_head"],
-            multi=True,
-            style={"width":"300px"}
-        ),
-        html.Label("model_precision:", style={"margin-left":"2rem"}),
-        dcc.Dropdown(
-            id="model-precision",
-            options=[
-                {"label":"None","value":""},
-                {"label":"float16","value":"float16"},
-                {"label":"bfloat16","value":"bfloat16"},
-                {"label":"float32","value":"float32"},
-            ],
-            value="",
-            clearable=False,
-            style={"width":"150px"}
-        )
-    ], style={"margin-bottom":"1em"}),
+    # Start / End / Top-K row
+    dbc.Row([
+        dbc.Col([
+            html.Label("Start Index"),
+            dcc.Input(id="start-ix", type="number", value=0, className="form-control"),
+        ], width=4),
+        dbc.Col([
+            html.Label("End Index"),
+            dcc.Input(id="end-ix", type="number", value=10, className="form-control"),
+        ], width=4),
+        dbc.Col([
+            html.Label("Top-K"),
+            dcc.Input(id="top-k", type="number", value=5, className="form-control"),
+        ], width=4),
+    ], className="mb-3"),
 
-    html.Button("Plot", id="plot-btn", n_clicks=0),
-    html.Hr(),
-    dcc.Graph(id="logit-lens-graph", style={"height":"700px"}),
-])
+    # Metric selector + Plot button row
+    dbc.Row([
+        dbc.Col([
+            html.Label("Metric"),
+            dcc.Dropdown(
+                id="metric-type",
+                options=[
+                    {"label":"Logits","value":"logits"},
+                    {"label":"Probs","value":"probs"},
+                    {"label":"Entropy","value":"entropy"},
+                    {"label":"KL Div","value":"kl"},
+                    {"label":"Cosine Sim","value":"cosine_sims"},
+                    {"label":"KL layer","value":"kl_layerwise"},
+                    {"label":"Tok variety","value":"token_variety"},
+                    {"label":"Ranks","value":"ranks"},
+                ],
+                value="logits",
+                clearable=False,
+                className="form-select"
+            ),
+        ], width=8),
+        dbc.Col([
+            html.Button("Plot", id="plot-btn", n_clicks=0, className="btn btn-primary mt-3"),
+        ], width=4, className="d-flex align-items-start justify-content-end"),
+    ], className="mb-4"),
+
+    # Advanced settings header
+    html.H4("Advanced settings", className="mb-3"),
+
+    # block_step / font sizes row
+    dbc.Row([
+        dbc.Col([
+            html.Label("block_step"), 
+            dcc.Input(id="block-step", type="number", value=1, className="form-control"),
+        ], width=4),
+        dbc.Col([
+            html.Label("token_font_size"), 
+            dcc.Input(id="token-font-size", type="number", value=12, className="form-control"),
+        ], width=4),
+        dbc.Col([
+            html.Label("label_font_size"), 
+            dcc.Input(id="label-font-size", type="number", value=20, className="form-control"),
+        ], width=4),
+    ], className="mb-3"),
+
+    # Flags checklist row
+    dbc.Row([
+        dbc.Col([
+            dcc.Checklist(
+                id="flags",
+                options=[
+                    {"label":"include_input","value":"include_input"},
+                    {"label":"force_include_output","value":"force_include_output"},
+                    {"label":"include_subblocks","value":"include_subblocks"},
+                    {"label":"top_down","value":"top_down"},
+                    {"label":"verbose","value":"verbose"},
+                    {"label":"pad_to_max_length","value":"pad_to_max_length"},
+                    {"label":"Mean Top-K","value":"topk_mean"},
+                ],
+                value=["include_input","force_include_output","topk_mean"],
+                inline=True,
+                inputStyle={"margin-right":"8px","margin-left":"16px"}
+            )
+        ], width=12),
+    ], className="mb-3"),
+
+    # decoder layers / precision row
+    dbc.Row([
+        dbc.Col([
+            html.Label("decoder_layer_names"),
+            dcc.Dropdown(
+                id="decoder-layers",
+                options=[{"label":nm,"value":nm} for nm in ["norm","lm_head"]],
+                value=["norm","lm_head"],
+                multi=True,
+                className="form-select"
+            ),
+        ], width=6),
+        dbc.Col([
+            html.Label("model_precision"),
+            dcc.Dropdown(
+                id="model-precision",
+                options=[
+                    {"label":"None","value":""},
+                    {"label":"float16","value":"float16"},
+                    {"label":"bfloat16","value":"bfloat16"},
+                    {"label":"float32","value":"float32"},
+                ],
+                value="",
+                clearable=False,
+                className="form-select"
+            ),
+        ], width=6),
+    ], className="mb-4"),
+
+    # Graph row
+    dbc.Row([
+        dbc.Col([
+            dcc.Graph(id="logit-lens-graph", style={"height":"700px"}),
+        ], width=12),
+    ]),
+
+], fluid=True)
+
 
 @app.callback(
     Output("logit-lens-graph", "figure"),
@@ -128,18 +183,19 @@ def update_logit_lens(
 ):
     if not n or not text:
         return go.Figure()
-    end_ix = start_ix + len(text.split())
 
-    # translate flags list → booleans
+    # ensure end_ix ≥ start_ix+1
+    if end_ix is None or end_ix <= start_ix:
+        end_ix = start_ix + 1
+
     include_input        = "include_input" in flags
     force_include_output = "force_include_output" in flags
     include_subblocks    = "include_subblocks" in flags
     top_down             = "top_down" in flags
     verbose              = "verbose" in flags
     pad_to_max_length    = "pad_to_max_length" in flags
-    topk_mean = "topk_mean" in flags
+    topk_mean            = "topk_mean" in flags
 
-    # parse precision
     precision = None
     if model_precision:
         precision = getattr(torch, model_precision)

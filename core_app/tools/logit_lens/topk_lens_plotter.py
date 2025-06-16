@@ -431,7 +431,11 @@ def _topk_logit_lens_fig(
     block_step:int=1,
     token_font_size:int=12,
     label_font_size:int=20,
-) -> None:
+) -> go.Figure:
+    
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
     num_layers, num_tokens, vocab_size = layer_logits.shape
     end_ix = start_ix + num_tokens
 
@@ -531,14 +535,35 @@ def _topk_logit_lens_fig(
     if len(true_next_token_text) < num_tokens:
         true_next_token_text += [""] * (num_tokens - len(true_next_token_text))
 
-    # Ground truth matrix
+    # Ground truth matrix for comparison: shape [layers x tokens]
     correct_tokens_matrix = np.tile(true_next_token_text, (pred_tokens_str.shape[0], 1))
-
-    # Compute match between predicted and true next tokens
-    is_correct = (pred_tokens_str == correct_tokens_matrix)
 
     # Check which predictions match true next tokens
     is_correct = (pred_tokens_str == correct_tokens_matrix)
+
+    # Decode input tokens (used to check for embedding projection)
+    input_tokens_str = [tokenizer.decode([tid]) for tid in input_ids[0][start_ix:end_ix]]
+    input_tokens_matrix = np.tile(input_tokens_str, (pred_tokens_str.shape[0], 1))
+
+    # Suppress early-layer predictions that just repeat the input token (likely embedding projection)
+    not_input_projection = (pred_tokens_str != input_tokens_matrix)
+
+    # A mask: for each (layer, token), is this just echoing the input?
+    echo_mask = (pred_tokens_str == input_tokens_matrix)
+
+    # For each token position, find whether earlier layers ONLY echoed input
+    for j in range(echo_mask.shape[1]):  # loop over token positions
+        # If any previous layer (above current one) predicted something else, keep it
+        for i in range(1, echo_mask.shape[0]):
+            if not echo_mask[i - 1, j]:
+                # a prior non-echo happened, so from here on allow it even if it's an echo again
+                echo_mask[i:, j] = False
+                break
+
+    # Filter: suppress only those that are still pure echoes
+    is_correct = is_correct & ~echo_mask
+
+
     value_matrix = value_matrix[::-1]
     pred_token_text = pred_token_text[::-1]
     hovertext = hovertext[::-1]
@@ -571,7 +596,6 @@ def _topk_logit_lens_fig(
         ),
     ))
 
-    # Plot shapes
     correct_y, correct_x = np.where(is_correct == 1)
     for y, x in zip(correct_y, correct_x):
         fig.add_shape(
