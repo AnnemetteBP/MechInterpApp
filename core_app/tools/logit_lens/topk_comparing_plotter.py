@@ -11,6 +11,7 @@ import scipy.special
 from scipy.stats import wasserstein_distance
 from scipy.special import kl_div
 #import colorcet  # noqa
+import random
 from functools import lru_cache
 import plotly.graph_objects as go
 from ..util.python_utils import make_print_if_verbose
@@ -18,6 +19,18 @@ from ..util.python_utils import make_print_if_verbose
 from .hooks import make_lens_hooks
 from .layer_names import make_layer_names
 
+
+def _set_deterministic_backend(seed:int=42) -> None:
+    """ 
+    Forces PyTorch to use only deterministic operations (e.g., disables non-deterministic GPU kernels).
+    This is crucial for reproducibility: given the same inputs and model state, to get the same outputs every time.
+    """
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 # ===================== Clear Cache ============================
 def clear_cuda_cache():
@@ -474,11 +487,9 @@ def plot_topk_comparing_lens(
     verbose:bool=False,
     pad_to_max_length:bool=False,
     model_precision_1:Optional[str|None]=None,
-    model_precision_2:Optional[str|None]=None
+    model_precision_2:Optional[str|None]=None,
+    use_deterministic_backend:bool=False
 ) -> go.Figure:
-    
-    import torch._dynamo
-    torch._dynamo.config.suppress_errors = True
 
     metric_type = None
 
@@ -510,6 +521,12 @@ def plot_topk_comparing_lens(
     
     model_1, tokenizer_1 = _load_model_tokenizer(model_1, tokenizer_1, model_precision_1)
     model_2, tokenizer_2 = _load_model_tokenizer(model_2, tokenizer_2, model_precision_2)
+
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
+    if use_deterministic_backend:
+        _set_deterministic_backend()
 
     layer_names_1, layer_names_2 = multiple_layer_names(model_1=model_1, model_2=model_2)
 

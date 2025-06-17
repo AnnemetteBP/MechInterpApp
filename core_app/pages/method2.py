@@ -44,15 +44,24 @@ layout = dbc.Container([
         dbc.Col([
             html.Label("Start Index"),
             dcc.Input(id="start-ix-0", type="number", value=0, className="form-control"),
-        ], width=4),
+        ], width=3),
         dbc.Col([
             html.Label("End Index"),
             dcc.Input(id="end-ix-0", type="number", value=10, className="form-control"),
-        ], width=4),
+        ], width=3),
         dbc.Col([
             html.Label("Top-K"),
             dcc.Input(id="top-k-0", type="number", value=5, className="form-control"),
-        ], width=4),
+        ], width=3),
+        dbc.Col([
+            html.Label("use_deterministic_backend"),
+            dcc.Checklist(
+                id="deterministic",
+                options=[{"label": "Deterministic Backend", "value": False}],
+                value=[],
+                inputStyle={"margin-right":"8px"}
+            ),
+        ], width=3),
     ], className="mb-3"),
 
     # Metric selector + Plot button row
@@ -190,7 +199,8 @@ layout = dbc.Container([
       Input("flags-0",           "value"),
       Input("decoder-layers-0",  "value"),
       Input("model-precision-0", "value"),
-      Input("model-precision-00", "value"),
+      Input("model-precision-00","value"),
+      Input("deterministic",     "value"),
     ]
 )
 def update_logit_lens(
@@ -200,7 +210,8 @@ def update_logit_lens(
     text,
     start_ix, end_ix, top_k, metric,
     block_step, token_font_size, label_font_size,
-    flags, decoder_layers, model_precision_1, model_precision_2
+    flags, decoder_layers, model_precision_1, model_precision_2,
+    deterministic
 ):
     if not n or not text:
         return go.Figure()
@@ -216,6 +227,7 @@ def update_logit_lens(
     verbose              = "verbose" in flags
     pad_to_max_length    = "pad_to_max_length" in flags
     topk_mean            = "topk_mean" in flags
+    use_deterministic    = True if deterministic else False
 
     try:
         return topk_comparing_plotter.plot_topk_comparing_lens(
@@ -240,7 +252,8 @@ def update_logit_lens(
             verbose              = verbose,
             pad_to_max_length    = pad_to_max_length,
             model_precision_1    = model_precision_1,
-            model_precision_2    = model_precision_2
+            model_precision_2    = model_precision_2,
+            use_deterministic_backend = use_deterministic
         ) or go.Figure()
     except Exception as e:
         return go.Figure().add_annotation(

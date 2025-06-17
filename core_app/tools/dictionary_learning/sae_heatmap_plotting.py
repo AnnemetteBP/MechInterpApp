@@ -37,6 +37,7 @@ def _plot_token_heatmap(
     saliency:torch.Tensor|None=None,
     tokens_per_row:int=12,
 ) -> go.Figure:
+    
     num_tokens = len(tokens)
     token_feature_matrix = feature_token_matrix.T  # [num_tokens x top_k_features]
 
@@ -119,7 +120,6 @@ def _run_multi_layer_sae(
         model_to_eval:bool=True,
         deterministic_sae:bool=True,   
 ) -> go.Figure:
-    """ Run multi-layer SAE analysis """
 
     if model_to_eval:
         model.eval()
@@ -224,6 +224,9 @@ def plot_sae_heatmap(
     This ensures the model behaves consistently during evaluation or inference (e.g., stable activations for SAE), not training.
     """
     model, tokenizer = _load_model_tokenizer(model_path, tokenizer_path, model_precision)
+    
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
 
     fig = _run_multi_layer_sae(
         model=model,

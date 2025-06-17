@@ -152,7 +152,7 @@ layout = dbc.Container([
 @app.callback(
     Output("sae-saliency-graph", "figure"),
     [
-        Input("plot-btn",          "n_clicks"),
+        Input("plot-btn",       "n_clicks"),
         Input("model-id",          "value"),
         Input("tokenizer-id",      "value"),
         Input("input-text",        "value"),

@@ -11,7 +11,7 @@ from scipy.special import kl_div
 
 from scipy.spatial.distance import cosine
 from scipy.special import rel_entr
-
+import random
 import matplotlib as mpl
 #import colorcet  # noqa
 from tqdm import tqdm
@@ -53,6 +53,19 @@ def compute_language_coverage(topk_indices, token_lang_map, target_languages=Non
         lang_coverage = {lang: lang_counts.get(lang, 0) / total for lang in target_languages}
         lang_coverage_per_layer.append(lang_coverage)
     return lang_coverage_per_layer
+
+
+def _set_deterministic_backend(seed:int=42) -> None:
+    """ 
+    Forces PyTorch to use only deterministic operations (e.g., disables non-deterministic GPU kernels).
+    This is crucial for reproducibility: given the same inputs and model state, to get the same outputs every time.
+    """
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 # ===================== Misc ============================
 def clear_cuda_cache() -> None:
@@ -720,13 +733,20 @@ def plot_topk_logit_lens(
     top_down:bool=False,
     verbose:bool=False,
     pad_to_max_length:bool=False,
-    model_precision:Optional[str|None]=None
+    model_precision:Optional[str|None]=None,
+    use_deterministic_backend:bool=False
 ) -> go.Figure:
   
     model, tokenizer = _load_model_tokenizer(model_path, tokenizer_path, model_precision)
     """if model_precision:
         model = model.to(model_precision)"""
 
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
+    if use_deterministic_backend:
+        _set_deterministic_backend()
+    
     rank_matrix_raw = None
     pred_ranks = None
     metric_type = None

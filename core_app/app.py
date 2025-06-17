@@ -23,7 +23,7 @@ routes = {
 }
 
 views = {
-    "/":        core_app.pages.dashboard.layout,
+    "/":      core_app.pages.dashboard.layout,
     "/method1": core_app.pages.method1.layout,
     "/method2": core_app.pages.method2.layout,
     "/method3": core_app.pages.method3.layout,
