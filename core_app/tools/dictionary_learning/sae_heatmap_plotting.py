@@ -217,7 +217,7 @@ def plot_sae_heatmap(
         deterministic_sae:bool=True,
         token_font_size:int=12,
         label_font_size:int=20,
-) -> None:
+) -> go.Figure:
     """
     Run multi-layer SAE analysis
     eval() to disable dropout and uses running statistics for batch norm instead of batch-wise statistics.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Tuple, List, Dict, Optional, Any
+from dash import dcc, html
 
 import os, json
 import math
@@ -31,7 +32,7 @@ def clean_token(token: str) -> str:
 
 # cache so we don’t re-load on every callback
 @lru_cache(maxsize=2)
-def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
+def load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
     tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
 
     if quant_config:
@@ -80,7 +81,7 @@ def _plot_comparing_heatmap(
     quant_saliency:torch.Tensor|None=None,
     token_font_size:int=20,
     label_font_size:int=20,
-) ->  None:
+) -> go.Figure:
     num_tokens = len(tokens)
     token_feature_matrix = feature_token_matrix.T
 
@@ -134,14 +135,14 @@ def _plot_comparing_heatmap(
 
     fig = go.Figure(data=go.Heatmap(
         z=z,
+        zmin=0.0,
+        zmax=1.0,
         text=text,
         hoverinfo="text",
         hovertext=hovertext,
-        colorscale='RdBu',
-        reversescale=True,
+        colorscale='RdBu_r',  # Or 'Inferno', 'Cividis', etc.
         showscale=True,
         texttemplate="%{text}",
-        #textfont={"size": 11, "color": "black", "family": "Times New Roman"},
         textfont={"size": token_font_size, "family": "DejaVu Sans"},
         xgap=2, ygap=2
     ))
@@ -172,7 +173,7 @@ def _run_multi_model_sae(
         deterministic_sae:bool=True,
         token_font_size:int=20,
         label_font_size:int=20,  
-) -> Dict:
+):
     """
     Run multi-layer SAE analysis
     eval() to disable dropout and uses running statistics for batch norm instead of batch-wise statistics.
@@ -184,6 +185,7 @@ def _run_multi_model_sae(
         fp_model.eval(), quant_model.eval()
 
     all_outputs = {}
+    layer_heatmaps = []  # <-- Collect all figures here
 
     for layer_idx in target_layers:
         print(f"\nComparing SAE on layer {layer_idx}")
@@ -212,7 +214,7 @@ def _run_multi_model_sae(
         topk_indices = total_per_feature.topk(top_k).indices
         fp_top_matrix = fp_codes[:, topk_indices].abs().T  # [top_k x num_tokens]
 
-        _plot_comparing_heatmap(
+        fig = _plot_comparing_heatmap(
             tokens=tokens,
             feature_token_matrix=fp_top_matrix,
             top_k=top_k,
@@ -232,8 +234,10 @@ def _run_multi_model_sae(
             'fp_codes': fp_codes,
             'quant_codes': quant_codes
         }
+    
+        layer_heatmaps.append((f"Layer {layer_idx}", fig))  # ← keep layer name
 
-    return all_outputs
+    return layer_heatmaps  # List of (title, figure)
 
 
 def plot_comparing_heatmap(
@@ -247,10 +251,10 @@ def plot_comparing_heatmap(
         deterministic_sae:bool=True,
         token_font_size:int=20,
         label_font_size:int=20,
-) -> None:
+):
 
 
-    fig = _run_multi_model_sae(
+    layer_figs   = _run_multi_model_sae(
         models=models,
         tokenizer=tokenizer,
         text=inputs,
@@ -264,4 +268,13 @@ def plot_comparing_heatmap(
     )
 
     clear_cuda_cache()
-    return fig
+    return [
+        html.Div([
+            html.H4(layer_name),
+            dcc.Graph(
+                figure=fig,
+                style={"height": "100%", "width": "100%"}  # adjust size here
+            )
+        ], style={"marginBottom": "12px"})
+        for layer_name, fig in layer_figs
+    ]
