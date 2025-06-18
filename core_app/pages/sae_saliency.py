@@ -1,76 +1,52 @@
-from dash import html, dcc, Input, Output
+
+import dash
+from dash import dcc, html, Input, Output, State, callback
+import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import dash_bootstrap_components as dbc
 import torch
 from core_app.app import app
-from ..tools.dictionary_learning import sae_heatmap_plotting
+from ..tools.dictionary_learning.sae_heatmap_plotting import plot_sae_heatmap
 
 
 layout = dbc.Container([
+    html.H2("🧠 Single-Model SAE Heatmap", className="mb-4"),
 
-    html.H2("🧠 SAE Saliency Heatmap", className="mb-4"),
-
-    # Model & Tokenizer row
     dbc.Row([
         dbc.Col([
-            html.Label("Model ID/Path"),
-            dcc.Input(id="model-id", value="DHL3B/DHL3B-model", className="form-control"),
+            html.Label("Input Text"),
+            dcc.Input(id="sm-text", className="form-control", value="The king led the troops into battle."),
+        ])
+    ], className="mb-3"),
+
+    dbc.Row([
+        dbc.Col([
+            html.Label("Target Layers (comma-separated)"),
+            dcc.Input(id="sm-layers", className="form-control", value="5,10,15"),
         ], width=6),
         dbc.Col([
-            html.Label("Tokenizer ID/Path"),
-            dcc.Input(id="tokenizer-id", value="DHL3B/DHL3B-tokenizer", className="form-control"),
-        ], width=6),
+            html.Label("Top K Concepts"),
+            dcc.Input(id="sm-topk", type="number", value=5, className="form-control"),
+        ], width=2),
+        dbc.Col([
+            html.Label("Tokens per Row"),
+            dcc.Input(id="sm-tpr", type="number", value=12, className="form-control"),
+        ], width=2)
     ], className="mb-3"),
 
-    # Prompt row
     dbc.Row([
         dbc.Col([
-            html.Label("Prompt"),
-            dcc.Textarea(
-                id="input-text",
-                placeholder="Your prompt here: e.g., What is y if y=2*2-4+(3*2)",
-                value="the cat cat is on the mat mat",
-                className="form-control",
-                style={"height": "80px"}
-            ),
-        ], width=12),
-    ], className="mb-3"),
-    # Start / End / Top-K row
-    dbc.Row([
+            html.Label("Model Path"),
+            dcc.Input(id="sm-model", value="DHL3B/DHL3B-model", className="form-control")
+        ]),
         dbc.Col([
-            html.Label("Tokens per row"),
-            dcc.Input(id="tokens-per-row", type="number", value=0, className="form-control"),
-        ], width=3),
+            html.Label("Tokenizer Path"),
+            dcc.Input(id="sm-tokenizer", value="DHL3B/DHL3B-tokenizer", className="form-control")
+        ]),
         dbc.Col([
-            html.Label("Eval Mode"),
-            dcc.Checklist(
-                id="eval-mode",
-                options=[{"label": "Eval Mode", "value": True}],
-                value=[True],
-                inputStyle={"margin-right":"8px"}
-            ),
-        ], width=3),
-        dbc.Col([
-            html.Label("Top-K"),
-            dcc.Input(id="top-k", type="number", value=5, className="form-control"),
-        ], width=3),
-        dbc.Col([
-            html.Label("Deterministic Backend"),
-            dcc.Checklist(
-                id="deterministic",
-                options=[{"label": "Deterministic SAE", "value": True}],
-                value=[],
-                inputStyle={"margin-right":"8px"}
-            ),
-        ], width=3),
-    ], className="mb-3"),
-
-    # Metric selector + Plot button row
-    dbc.Row([
-        dbc.Col([
-            html.Label("bnb_config"),
+            html.Label("BnB Config"),
             dcc.Dropdown(
-                id="model-precision",
+                id="sm-precision",
                 options=[
                     {"label":"None","value":""},
                     {"label":"PTDQ 8-bit","value":"ptdq8bit"},
@@ -82,126 +58,94 @@ layout = dbc.Container([
                 clearable=False,
                 className="form-select"
             ),
-        ], width=8),
+        ])
+    ], className="mb-3"),
 
-        dbc.Col([
-            html.Button("Plot", id="plot-btn", n_clicks=0, className="btn btn-primary mt-3"),
-        ], width=4, className="d-flex align-items-start justify-content-end"),
-    ], className="mb-4"),
-
-    # Advanced settings header
-    html.H4("Advanced settings", className="mb-3"),
-
-    # block_step / font sizes row
     dbc.Row([
         dbc.Col([
-            html.Label("block_step"), 
-            dcc.Input(id="block-step", type="number", value=1, className="form-control"),
-        ], width=4),
+            html.Label("Eval Mode"),
+            dcc.Checklist(
+                id="sm-eval-mode",
+                options=[{"label": "Eval Mode", "value": True}],
+                value=[True],
+                inputStyle={"margin-right":"8px"}
+            ),
+        ], width=3),
         dbc.Col([
             html.Label("token_font_size"), 
-            dcc.Input(id="token-font-size", type="number", value=12, className="form-control"),
-        ], width=4),
+            dcc.Input(id="sm-token-font-size", type="number", value=12, className="form-control"),
+        ], width=3),
         dbc.Col([
             html.Label("label_font_size"), 
-            dcc.Input(id="label-font-size", type="number", value=20, className="form-control"),
-        ], width=4),
-    ], className="mb-3"),
-
-    # Flags checklist row
-    dbc.Row([
+            dcc.Input(id="sm-label-font-size", type="number", value=14, className="form-control"),
+        ], width=3),
         dbc.Col([
+            html.Label("Deterministic Backend"),
             dcc.Checklist(
-                id="flags",
-                options=[
-                    {"label":"Mean Top-K","value":"topk_mean"},
-                ],
-                value=["topk_mean"],
-                inline=True,
-                inputStyle={"margin-right":"8px","margin-left":"16px"}
-            )
-        ], width=12),
+                id="sm-deterministic",
+                options=[{"label": "Deterministic SAE", "value": True}],
+                value=[],
+                inputStyle={"margin-right":"8px"}
+            ),
+        ], width=3),
     ], className="mb-3"),
 
-    # decoder layers / precision row
-    dbc.Row([
-        dbc.Col([], width=3),
-        dbc.Col([
-            html.Label("target_layers"),
-            dcc.Dropdown(
-                id="target-layers",
-                options=[{"label":nm,"value":nm} for nm in [1, 5, 10, 20, 25]],
-                value=[1, 5, 10, 20, 25],
-                multi=True,
-                className="form-select"
-            ),
-        ], width=6),
-        dbc.Col([], width=3),
-    ], className="mb-4"),
-
-    # Graph row
     dbc.Row([
         dbc.Col([
-            dcc.Graph(id="sae-saliency-graph", style={"height":"700px"}),
-        ], width=12),
-    ]),
+            html.Button("Run SAE", id="sm-run", className="btn btn-primary")
+        ], width=12)
+    ], className="mb-3"),
 
+    html.Hr(),
+
+    dbc.Row([
+        dbc.Col([
+            dcc.Loading(
+                id="sm-loading",
+                type="default",
+                children=html.Div(id="sm-graph")
+            )
+        ])
+    ])
 ], fluid=True)
 
 
 @app.callback(
-    Output("sae-saliency-graph", "figure"),
-    [
-        Input("plot-btn",       "n_clicks"),
-        Input("model-id",          "value"),
-        Input("tokenizer-id",      "value"),
-        Input("input-text",        "value"),
-        Input("top-k",             "value"),
-        Input("tokens-per-row",    "value"),
-        Input("token-font-size",   "value"),
-        Input("label-font-size",   "value"),
-        Input("flags",             "value"),
-        Input("target-layers",     "value"),
-        Input("model-precision",   "value"),
-        Input("eval-mode",         "value"),
-        Input("deterministic",     "value"),
-    ]
+    Output("sm-graph", "children"),
+    Input("sm-run", "n_clicks"),
+    State("sm-text", "value"),
+    State("sm-layers", "value"),
+    State("sm-topk", "value"),
+    State("sm-tpr", "value"),
+    State("sm-model", "value"),
+    State("sm-tokenizer", "value"),
+    State("sm-precision", "value"),
+    State("sm-eval-mode", "value"),
+    State("sm-token-font-size", "value"),
+    State("sm-label-font-size", "value"),
+    State("sm-deterministic", "value"),
 )
-def update_sae_saliency(
-    n_clicks, model_id, tok_id, text,
-    top_k, tokens_per_row,
-    token_font_size, label_font_size,
-    flags, target_layers, model_precision,
-    eval_mode, deterministic
-):
-    if not n_clicks or not text:
-        return go.Figure()
+def run_single_model_sae(n_clicks, text, layer_str, top_k, tpr, model_path, tokenizer_path, precision,
+                         eval_mode, token_font_size, label_font_size, deterministic):
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
 
-    topk_mean         = "topk_mean" in flags
-    model_to_eval     = True if eval_mode else False
-    deterministic_sae = True if deterministic else False
-    tokens_per_row    = tokens_per_row or 25
-    top_k             = top_k or 5
-    target_layers     = target_layers or []
+    target_layers = [int(x.strip()) for x in layer_str.split(",") if x.strip().isdigit()]
 
-    try:
-        return sae_heatmap_plotting.plot_sae_heatmap(
-            model_path        = model_id,
-            tokenizer_path    = tok_id,
-            inputs            = text,
-            model_precision   = model_precision,
-            top_k             = top_k,
-            #topk_mean         = topk_mean,
-            tokens_per_row    = tokens_per_row,
-            target_layers     = target_layers,
-            model_to_eval     = model_to_eval,
-            deterministic_sae = deterministic_sae,
-            token_font_size   = token_font_size,
-            label_font_size   = label_font_size
-        ) or go.Figure()
-    except Exception as e:
-        return go.Figure().add_annotation(
-            text=f"Error:\n{e}",
-            x=0.5, y=0.5, showarrow=False,
-            font=dict(color="red", size=14)
-        )
+
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
+    return plot_sae_heatmap(
+        model_path=model_path,
+        tokenizer_path=tokenizer_path,
+        inputs=text,
+        model_precision=precision,
+        top_k=top_k,
+        tokens_per_row=tpr,
+        target_layers=target_layers,
+        model_to_eval=eval_mode,
+        deterministic_sae=deterministic,
+        token_font_size=token_font_size,
+        label_font_size=label_font_size,
+    )

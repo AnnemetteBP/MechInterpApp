@@ -125,7 +125,7 @@ layout = dbc.Container([
             dcc.Loading(
                 id="sh-loading",
                 type="default",
-                children=html.Div(id="sh-graph")  # ← not dcc.Graph anymore!
+                children=html.Div(id="sh-graph")
             )
         ])
     ])

@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
+from dash import dcc, html
 import numpy as np
 import plotly.graph_objects as go
 
@@ -36,6 +37,8 @@ def _plot_token_heatmap(
     top_k:int=5,
     saliency:torch.Tensor|None=None,
     tokens_per_row:int=12,
+    token_font_size:int=12,
+    label_font_size:int=20,
 ) -> go.Figure:
     
     num_tokens = len(tokens)
@@ -90,13 +93,13 @@ def _plot_token_heatmap(
         showscale=True,
         texttemplate="%{text}",
         #textfont={"size": 10, "color": "black", "family": "Times New Roman"},
-        textfont={"size": 10, "family": "DejaVu Sans"},
+        textfont={"size": token_font_size, "family": "DejaVu Sans"},
         xgap=2, ygap=2
     ))
 
     fig.update_layout(
         title=f"Top-k {top_k} Token Activation",
-        title_font=dict(size=12, family="DejaVu Sans"),
+        title_font=dict(size=label_font_size, family="DejaVu Sans"),
         width=max(600, tokens_per_row * 50),
         height=num_rows * 50 + 100,
         margin=dict(l=20, r=20, t=40, b=20),
@@ -118,13 +121,16 @@ def _run_multi_layer_sae(
         tokens_per_row:int=12,
         target_layers:List[int]=[5,10,15],
         model_to_eval:bool=True,
-        deterministic_sae:bool=True,   
-) -> go.Figure:
+        deterministic_sae:bool=True,
+        token_font_size:int=12,
+        label_font_size:int=20,   
+):
 
     if model_to_eval:
         model.eval()
     
     all_layer_outputs = {}
+    layer_figs = []
 
     for layer_idx in target_layers:
         print(f"\nRunning SAE on layer {layer_idx}")
@@ -158,10 +164,14 @@ def _run_multi_layer_sae(
             feature_token_matrix=feature_token_matrix,
             top_k=top_k,
             saliency=saliency,
-            tokens_per_row=tokens_per_row
+            tokens_per_row=tokens_per_row,
+            token_font_size=token_font_size,
+            label_font_size=token_font_size,
         )
 
-    return fig
+        layer_figs.append((f"Layer {layer_idx}", fig))
+    
+    return layer_figs
 
 
 # cache so we don’t re-load on every callback
@@ -228,7 +238,7 @@ def plot_sae_heatmap(
     import torch._dynamo
     torch._dynamo.config.suppress_errors = True
 
-    fig = _run_multi_layer_sae(
+    layer_figs = _run_multi_layer_sae(
         model=model,
         tokenizer=tokenizer,
         text=inputs,
@@ -237,7 +247,15 @@ def plot_sae_heatmap(
         target_layers=target_layers,
         model_to_eval=model_to_eval,
         deterministic_sae=deterministic_sae,
+        token_font_size=token_font_size,
+        label_font_size=label_font_size,
     )
 
     clear_cuda_cache()
-    return fig
+    return [
+        html.Div([
+            html.H4(layer_name),
+            dcc.Graph(figure=fig, style={"height": "100%", "width": "100%"})
+        ], style={"marginBottom": "12px"})
+        for layer_name, fig in layer_figs
+    ]
