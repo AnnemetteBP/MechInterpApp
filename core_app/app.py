@@ -11,22 +11,34 @@ server = app.server
 app.title = "Mech Interp Dashboard"
 
 import core_app.pages.dashboard
-import core_app.pages.method1
-import core_app.pages.method2
-import core_app.pages.method3
+import core_app.pages.topk_logit_lens
+import core_app.pages.topk_comparing_lens
+import core_app.pages.sae_saliency
+import core_app.pages.sae_comparison
+import core_app.pages.token_embeddings
+import core_app.pages.neighbor_drift
+import core_app.pages.sentence_embedding_drift
 
 routes = {
-    "Home":               "/",
-    "TopK-N Logit Lens":  "/method1",
-    "TopK-N Comparing Lens":  "/method2",
-    "SAE Saliency Heatmap":  "/method3",
+    "Home":                                          "/",
+    "TopK-N Logit Lens":              "/topk_logit_lens",
+    "TopK-N Comparing Lens":      "/topk_comparing_lens",
+    "SAE Saliency Heatmap":              "/sae_saliency",
+    "SAE Comparison Heatmap":          "/sae_comparison",
+    "PCA Token Embedding":  "/visualize_token_embedding",
+    "PCA Neighbor Drift":    "/visualize_neighbor_drift",
+    "PCA Sentence Drift":    "/visualize_sentence_drift",
 }
 
 views = {
-    "/":      core_app.pages.dashboard.layout,
-    "/method1": core_app.pages.method1.layout,
-    "/method2": core_app.pages.method2.layout,
-    "/method3": core_app.pages.method3.layout,
+    "/":                                        core_app.pages.dashboard.layout,
+    "/topk_logit_lens":                   core_app.pages.topk_logit_lens.layout,
+    "/topk_comparing_lens":           core_app.pages.topk_comparing_lens.layout,
+    "/sae_saliency":                         core_app.pages.sae_saliency.layout,
+    "/sae_comparison":                     core_app.pages.sae_comparison.layout,
+    "/visualize_token_embedding":        core_app.pages.token_embeddings.layout,
+    "/visualize_neighbor_drift":           core_app.pages.neighbor_drift.layout,
+    "/visualize_sentence_drift": core_app.pages.sentence_embedding_drift.layout,
 }
 
 nav = dbc.NavbarSimple(
@@ -34,7 +46,7 @@ nav = dbc.NavbarSimple(
         dbc.NavItem(dbc.NavLink(label, href=path, active="exact"))
         for label, path in routes.items()
     ],
-    brand="Mech. Interp. Toolkit",
+    brand="🛠️ Mech. Interp. Toolkit",
     color="dark",
     dark=True,
     fluid=True,

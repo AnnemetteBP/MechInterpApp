@@ -8,12 +8,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from functools import lru_cache
 import numpy as np
 import plotly.graph_objects as go
 
 from .sae_class import SAE
 from .sae_hooks import get_layer_activations
 
+
+def clear_cuda_cache():
+    """Clear GPU cache to avoid memory errors during operations"""
+    torch.cuda.empty_cache()
 
 def clean_token(token: str) -> str:
     if token.startswith("Ġ"):
@@ -23,6 +29,47 @@ def clean_token(token: str) -> str:
     else:
         return token
 
+# cache so we don’t re-load on every callback
+@lru_cache(maxsize=2)
+def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
+    tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
+
+    if quant_config:
+        if '4' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
+                bnb_4bit_quant_type='nf4',       # or 'fp4'
+                #bnb_4bit_compute_dtype='float16'
+            )
+        elif '8' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                #bnb_4bit_compute_dtype='float16'
+            )
+        
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            quantization_config=bnb_config,
+            device_map='auto',
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+
+    return model, tok
+
 def _plot_comparing_heatmap(
     tokens:List[str],
     feature_token_matrix:torch.Tensor,
@@ -30,7 +77,9 @@ def _plot_comparing_heatmap(
     saliency:torch.Tensor|None=None,
     tokens_per_row:int=12,
     fp_saliency:torch.Tensor|None=None,
-    quant_saliency:torch.Tensor|None=None
+    quant_saliency:torch.Tensor|None=None,
+    token_font_size:int=20,
+    label_font_size:int=20,
 ) ->  None:
     num_tokens = len(tokens)
     token_feature_matrix = feature_token_matrix.T
@@ -93,13 +142,13 @@ def _plot_comparing_heatmap(
         showscale=True,
         texttemplate="%{text}",
         #textfont={"size": 11, "color": "black", "family": "Times New Roman"},
-        textfont={"size": 10, "family": "DejaVu Sans"},
+        textfont={"size": token_font_size, "family": "DejaVu Sans"},
         xgap=2, ygap=2
     ))
 
     fig.update_layout(
         title="Token-Level FP vs Quant Comparison",
-        title_font=dict(size=12, family="DejaVu Sans"),
+        title_font=dict(size=label_font_size, family="DejaVu Sans"),
         width=max(600, tokens_per_row * 50),
         height=num_rows * 50 + 100,
         margin=dict(l=20, r=20, t=40, b=20),
@@ -109,7 +158,7 @@ def _plot_comparing_heatmap(
         paper_bgcolor="white"
     )
 
-    fig.show()
+    return fig
 
 
 def _run_multi_model_sae(
@@ -121,7 +170,8 @@ def _run_multi_model_sae(
         target_layers:List[int]=[5,10,15],
         models_to_eval:bool=True,
         deterministic_sae:bool=True,
-        fig_path:str|None=None    
+        token_font_size:int=20,
+        label_font_size:int=20,  
 ) -> Dict:
     """
     Run multi-layer SAE analysis
@@ -169,7 +219,9 @@ def _run_multi_model_sae(
             saliency=diff_saliency,  # difference instead of raw saliency
             tokens_per_row=tokens_per_row,
             fp_saliency=fp_saliency,
-            quant_saliency=quant_saliency
+            quant_saliency=quant_saliency,
+            token_font_size=token_font_size,
+            label_font_size=label_font_size,
         )
 
         all_outputs[f"layer_{layer_idx}"] = {
@@ -191,20 +243,25 @@ def plot_comparing_heatmap(
         top_k:int=5,
         tokens_per_row:int=12,
         target_layers:List[int]=[5,10,15],
-        models_to_eval:bool=True,
+        model_to_eval:bool=True,
         deterministic_sae:bool=True,
-        fig_path:str|None=None
+        token_font_size:int=20,
+        label_font_size:int=20,
 ) -> None:
-    """ Plots colored tokens from SAE analysis """
 
-    _run_multi_model_sae(
+
+    fig = _run_multi_model_sae(
         models=models,
         tokenizer=tokenizer,
         text=inputs,
         top_k=top_k,
         tokens_per_row=tokens_per_row,
         target_layers=target_layers,
-        models_to_eval=models_to_eval,
+        models_to_eval=model_to_eval,
         deterministic_sae=deterministic_sae,
-        fig_path=fig_path
+        token_font_size=token_font_size,
+        label_font_size=label_font_size,
     )
+
+    clear_cuda_cache()
+    return fig
