@@ -105,8 +105,8 @@ layout = dbc.Container([
                 type="default",
                 children=html.Div(id="sm-graph")
             )
-        ])
-    ])
+        ], width=12)
+    ], className="mb-3"),
 ], fluid=True)
 
 

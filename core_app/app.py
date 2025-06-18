@@ -18,6 +18,7 @@ import core_app.pages.sae_comparison
 import core_app.pages.token_embeddings
 import core_app.pages.neighbor_drift
 import core_app.pages.sentence_embedding_drift
+import core_app.pages.attention_viewer
 
 routes = {
     "Home":                                          "/",
@@ -28,6 +29,7 @@ routes = {
     "PCA Token Embedding":  "/visualize_token_embedding",
     "PCA Neighbor Drift":    "/visualize_neighbor_drift",
     "PCA Sentence Drift":    "/visualize_sentence_drift",
+    "Attention Viewer":              "/attention_viewer",
 }
 
 views = {
@@ -39,6 +41,7 @@ views = {
     "/visualize_token_embedding":        core_app.pages.token_embeddings.layout,
     "/visualize_neighbor_drift":           core_app.pages.neighbor_drift.layout,
     "/visualize_sentence_drift": core_app.pages.sentence_embedding_drift.layout,
+    "/attention_viewer":                 core_app.pages.attention_viewer.layout,
 }
 
 nav = dbc.NavbarSimple(
