@@ -5,7 +5,7 @@ from ..tools.embedding_tool.sentence_embedding_drift_plotter import plot_sentenc
 
 
 layout = dbc.Container([
-    html.H2("📐 Sentence Embedding Drift: FP vs Quantized", className="mb-4"),
+    html.H2("📐 Sentence Embedding Drift Comparison", className="mb-4"),
 
     dbc.Row([
         dbc.Col([

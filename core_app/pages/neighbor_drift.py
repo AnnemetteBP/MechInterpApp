@@ -5,7 +5,7 @@ from ..tools.embedding_tool.neighbor_drift_plotter import plot_fp_vs_quantized_n
 
 
 layout = dbc.Container([
-    html.H2("🔁 Neighbor Drift: FP vs Quantized", className="mb-4"),
+    html.H2("🔁 Neighbor Drift Comparison", className="mb-4"),
 
     dbc.Row([
         dbc.Col([

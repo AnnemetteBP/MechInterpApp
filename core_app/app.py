@@ -1,11 +1,17 @@
-from dash import Dash, dcc, html
+from dash import Dash, dcc, html, clientside_callback
 from dash.dependencies import Input, Output
 import dash_bootstrap_components as dbc
+import os
+
+
+#ASSETS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "assets"))
 
 app = Dash(
     __name__,
     suppress_callback_exceptions=True,
-    external_stylesheets=[dbc.themes.FLATLY],
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    #external_stylesheets=[dbc.themes.FLATLY],
+    #assets_folder="assets",
 )
 server = app.server
 app.title = "Mech Interp Dashboard"
@@ -46,13 +52,54 @@ views = {
 
 nav = dbc.NavbarSimple(
     children=[
-        dbc.NavItem(dbc.NavLink(label, href=path, active="exact"))
-        for label, path in routes.items()
+        dbc.NavItem(dbc.NavLink("Home", href="/", active="exact")),
+
+        dbc.DropdownMenu(
+            label="Logit Lens",
+            nav=True,
+            in_navbar=True,
+            children=[
+                dbc.DropdownMenuItem("TopK-N Logit Lens", href="/topk_logit_lens"),
+                dbc.DropdownMenuItem("TopK-N Comparing Lens", href="/topk_comparing_lens"),
+            ],
+        ),
+
+        dbc.DropdownMenu(
+            label="SAE",
+            nav=True,
+            in_navbar=True,
+            children=[
+                dbc.DropdownMenuItem("SAE Saliency Heatmap", href="/sae_saliency"),
+                dbc.DropdownMenuItem("SAE Comparison Heatmap", href="/sae_comparison"),
+            ],
+        ),
+
+        dbc.DropdownMenu(
+            label="PCA",
+            nav=True,
+            in_navbar=True,
+            children=[
+                dbc.DropdownMenuItem("PCA Token Embedding", href="/visualize_token_embedding"),
+                dbc.DropdownMenuItem("PCA Neighbor Drift", href="/visualize_neighbor_drift"),
+                dbc.DropdownMenuItem("PCA Sentence Drift", href="/visualize_sentence_drift"),
+            ],
+        ),
+
+        dbc.NavItem(dbc.NavLink("Attention Viewer", href="/attention_viewer", active="exact")),
+        dbc.NavItem(
+            dbc.Switch(
+                id="theme-switch",
+                label="Light mode",
+                value=False,
+                style={"marginLeft": "1rem", "marginTop": "0.3rem"},
+            )
+        ),
     ],
     brand="🛠️ Mech. Interp. Toolkit",
     color="dark",
     dark=True,
     fluid=True,
+    brand_href="/",
 )
 
 app.layout = html.Div([
@@ -61,6 +108,16 @@ app.layout = html.Div([
     html.Div(id="page-content", style={"padding": "2rem"})
 ])
 
+clientside_callback(
+    """
+    function(switchOn) {
+        document.documentElement.setAttribute('data-bs-theme', switchOn ? 'light' : 'dark');
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("theme-switch", "id"),  # dummy output
+    Input("theme-switch", "value")
+)
 
 @app.callback(
     Output("page-content", "children"),
