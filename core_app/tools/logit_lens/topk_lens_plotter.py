@@ -22,6 +22,7 @@ from ..util.python_utils import make_print_if_verbose
 from .hooks import make_lens_hooks
 from .layer_names import make_layer_names
 from functools import lru_cache
+from quant_utils.ptq_configs.bitnet_ptq import apply_bitnet_ptq
 
 DetectorFactory.seed = 0  # for reproducibility
 
@@ -212,8 +213,8 @@ def collect_logits(model, input_ids, layer_names, decoder_layer_names) -> Tuple:
 # ===================== Probs and logits for topk > 1 and for topk plot ============================
 def postprocess_logits_topk(layer_logits:Any, normalize_probs=False, top_n:int=5, return_scores:bool=True) -> Tuple[Any, Any, Any]:
 
-    if layer_logits.dtype == np.float16:
-        layer_logits = layer_logits.astype(np.float32)
+    #if layer_logits.dtype == np.float16:
+        #layer_logits = layer_logits.astype(np.float32)
 
     # Replace NaNs and infs with appropriate values
     layer_logits = np.nan_to_num(layer_logits, nan=-1e9, posinf=1e9, neginf=-1e9)
@@ -446,8 +447,6 @@ def _topk_logit_lens_fig(
     label_font_size:int=20,
 ) -> go.Figure:
     
-    import torch._dynamo
-    torch._dynamo.config.suppress_errors = True
 
     num_layers, num_tokens, vocab_size = layer_logits.shape
     end_ix = start_ix + num_tokens
@@ -536,6 +535,9 @@ def _topk_logit_lens_fig(
             # Apply log scale and normalization to the value matrix for proper coloring
             value_matrix = np.log10(pred_ranks)  # Use log scale for ranks
             value_matrix = min_max_scale(value_matrix, 0, 1)  # Scale to [0, 1] for proper coloring
+        
+        elif metric_type == "kl" or metric_type == "lw_kl" or metric_type == "entropy":
+            value_matrix = min_max_scale(value_matrix, 0, 10)
 
         else:
             value_matrix = min_max_scale(value_matrix, 0, 1)
@@ -561,10 +563,9 @@ def _topk_logit_lens_fig(
     # Suppress early-layer predictions that just repeat the input token (likely embedding projection)
     not_input_projection = (pred_tokens_str != input_tokens_matrix)
 
-    # A mask: for each (layer, token), is this just echoing the input?
+    # A mask: for each (layer, token)
     echo_mask = (pred_tokens_str == input_tokens_matrix)
 
-    # For each token position, find whether earlier layers ONLY echoed input
     for j in range(echo_mask.shape[1]):  # loop over token positions
         # If any previous layer (above current one) predicted something else, keep it
         for i in range(1, echo_mask.shape[0]):
@@ -575,7 +576,6 @@ def _topk_logit_lens_fig(
 
     # Filter: suppress only those that are still pure echoes
     is_correct = is_correct & ~echo_mask
-
 
     value_matrix = value_matrix[::-1]
     pred_token_text = pred_token_text[::-1]
@@ -590,7 +590,6 @@ def _topk_logit_lens_fig(
     else:
         cell_text = pred_token_text
 
-    # Heatmap trace
     fig.add_trace(go.Heatmap(
         z=value_matrix,
         x=list(range(num_tokens)),
@@ -618,7 +617,7 @@ def _topk_logit_lens_fig(
             line=dict(color="black", width=2),
             layer="above"
         )
-    # Dummy scatter trace to activate xaxis2 (next-token labels)
+
     fig.add_trace(go.Scatter(
         x=list(range(num_tokens)),
         y=[None] * num_tokens,
@@ -630,7 +629,7 @@ def _topk_logit_lens_fig(
     ))
 
     fig.update_layout(
-        font=dict(family="DejaVu Sans", size=label_font_size), # or 'Noto Sans'
+        font=dict(family="DejaVu Sans", size=label_font_size), 
         xaxis=dict(
             tickmode='array',
             tickvals=list(range(num_tokens)),
@@ -666,46 +665,76 @@ def _topk_logit_lens_fig(
     return fig
 
 
+def _load_qconfig_model(model_id, bnb_config) -> AutoModelForCausalLM:
+    model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    quantization_config=bnb_config,
+    device_map='auto',
+    return_dict=True,
+    output_hidden_states=True,
+    low_cpu_mem_usage=True,
+    use_safetensors=True,
+    trust_remote_code=True
+    )
+
+    return model
+
+def _load_ptq_model(model_id) -> AutoModelForCausalLM:
+    model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    torch_dtype=torch.float32,
+    return_dict=True,
+    output_hidden_states=True,
+    low_cpu_mem_usage=True,
+    use_safetensors=True,
+    trust_remote_code=True
+    #local_files_only=True
+    )
+
+    return model
+
+def _load_model(model_id) -> AutoModelForCausalLM:
+    model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    return_dict=True,
+    output_hidden_states=True,
+    low_cpu_mem_usage=True,
+    use_safetensors=True,
+    trust_remote_code=True
+    )
+
+    return model
+
 # cache so we don’t re-load on every callback
 @lru_cache(maxsize=2)
 def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
-    tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(tok_id, trust_remote_code=True)
 
     if quant_config:
         if '4' in quant_config:
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
+                #bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
                 bnb_4bit_quant_type='nf4',       # or 'fp4'
                 #bnb_4bit_compute_dtype='float16'
             )
+            model = _load_qconfig_model(model_id=model_id, bnb_config=bnb_config)
+
         elif '8' in quant_config:
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
                 #bnb_4bit_compute_dtype='float16'
             )
-        
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            quantization_config=bnb_config,
-            device_map='auto',
-            return_dict=True,
-            output_hidden_states=True,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-            trust_remote_code=True
-        )
+            model = _load_qconfig_model(model_id=model_id, bnb_config=bnb_config)
+
+        elif '158' in quant_config:
+            base_model = _load_ptq_model(model_id=model_id)
+            model = apply_bitnet_ptq(base_model, num_bits=8, use_ternary=True, act_bits=8)
     else:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            return_dict=True,
-            output_hidden_states=True,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-            trust_remote_code=True
-        )
+        model = _load_model(model_id=model_id)
 
     return model, tok
+
 
 def plot_topk_logit_lens(
     model_path:str,
@@ -751,13 +780,11 @@ def plot_topk_logit_lens(
     pred_ranks = None
     metric_type = None
 
-    # Handle input format and ensure it's a list of prompts
     if isinstance(inputs, str):
         inputs = [inputs]
     elif inputs is None:
         inputs = ["What is y if y=2*2-4+(3*2)"]  # Default prompt
 
-    # Create layer names for the model layers
     layer_names = make_layer_names(
         model,
         block_step=block_step,
@@ -775,7 +802,7 @@ def plot_topk_logit_lens(
 
     # Collect logits from the model
     layer_logits, layer_names = collect_logits(model, input_ids, layer_names, decoder_layer_names)
-    layer_logits = safe_cast_logits(torch.tensor(layer_logits)).numpy()
+    #layer_logits = safe_cast_logits(torch.tensor(layer_logits)).numpy()
     # Process logits to get top-k predictions and probabilities
     layer_preds, layer_probs, _ = postprocess_logits_topk(layer_logits, top_n=topk)
 
@@ -830,7 +857,6 @@ def plot_topk_logit_lens(
         map_color = 'Cividis'
 
         if topk_mean:
-            # Clip and normalize
             clipped_probs = np.take_along_axis(layer_probs, topk_indices, axis=-1)  # (L, T, K)
             log_probs = np.log(np.clip(clipped_probs, 1e-10, 1.0))
             q_probs = np.exp(log_probs)  # Just to be safe: ensure proper probs (though they already are)
