@@ -20,15 +20,15 @@ layout = dbc.Container([
     dbc.Row([
         dbc.Col([
             html.Label("Model ID/Path"),
-            dcc.Input(id="model-id-1", value=MODELS[2], className="form-control"),
+            dcc.Input(id="model-id-1", value=MODELS[0], className="form-control"),
             html.Label("Model ID/Path"),
-            dcc.Input(id="model-id-2", value=MODELS[1], className="form-control"),
+            dcc.Input(id="model-id-2", value=MODELS[0], className="form-control"),
         ], width=6),
         dbc.Col([
             html.Label("Tokenizer ID/Path"),
-            dcc.Input(id="tokenizer-id-1", value=TOKS[2], className="form-control"),
+            dcc.Input(id="tokenizer-id-1", value=TOKS[0], className="form-control"),
             html.Label("Tokenizer ID/Path"),
-            dcc.Input(id="tokenizer-id-2", value=TOKS[1], className="form-control"),
+            dcc.Input(id="tokenizer-id-2", value=TOKS[0], className="form-control"),
         ], width=6),
     ], className="mb-3"),
 
