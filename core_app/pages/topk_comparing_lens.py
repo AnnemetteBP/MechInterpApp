@@ -5,6 +5,13 @@ import torch
 from core_app.app import app
 from ..tools.logit_lens import topk_comparing_plotter
 
+
+PROMPT = """Richmond Football Club Richmond began 2017 with 5 straight wins, a feat it had not achieved since 1995. A series of close losses hampered the Tigers throughout the middle of the season, including a 5-point loss to the Western Bulldogs, 2-point loss to Fremantle, and a 3-point loss to the Giants. Richmond ended the season strongly with convincing victories over Fremantle and St Kilda in the final two rounds, elevating the club to 3rd on the ladder. Richmond's first final of the season against the Cats at the MCG attracted a record qualifying final crowd of 95,028; the Tigers won by 51 points. Having advanced to the first preliminary finals for the first time since 2001, Richmond defeated Greater Western Sydney by 36 points in front of a crowd of 94,258 to progress to the Grand Final against Adelaide, their first Grand Final appearance since 1982. The attendance was 100,021, the largest crowd to a grand final since 1986. The Crows led at quarter time and led by as many as 13, but the Tigers took over the game as it progressed and scored seven straight goals at one point. They eventually would win by 48 points – 16.12 (108) to Adelaide's 8.12 (60) – to end their 37-year flag drought.[22] Dustin Martin also became the first player to win a Premiership medal, the Brownlow Medal and the Norm Smith Medal in the same season, while Damien Hardwick was named AFL Coaches Association Coach of the Year. Richmond's jump from 13th to premiers also marked the biggest jump from one AFL season to the next."""
+
+MODELS = ['DHL3B/DHL3B-model', 'LI8B/LI-model', 'HF1BitLLM/HF1BitLLM-model']
+TOKS = ['DHL3B/DHL3B-tokenizer', 'LI8B/LI-tokenizer', 'HF1BitLLM/HF1BitLLM-tokenizer']
+
+
 layout = dbc.Container([
 
     html.H2("🔍 TopK-N Comparing Lens", className="mb-4"),
@@ -13,15 +20,15 @@ layout = dbc.Container([
     dbc.Row([
         dbc.Col([
             html.Label("Model ID/Path"),
-            dcc.Input(id="model-id-1", value="DHL3B/DHL3B-model", className="form-control"),
+            dcc.Input(id="model-id-1", value=MODELS[2], className="form-control"),
             html.Label("Model ID/Path"),
-            dcc.Input(id="model-id-2", value="DHL3B/DHL3B-model", className="form-control"),
+            dcc.Input(id="model-id-2", value=MODELS[1], className="form-control"),
         ], width=6),
         dbc.Col([
             html.Label("Tokenizer ID/Path"),
-            dcc.Input(id="tokenizer-id-1", value="DHL3B/DHL3B-tokenizer", className="form-control"),
+            dcc.Input(id="tokenizer-id-1", value=TOKS[2], className="form-control"),
             html.Label("Tokenizer ID/Path"),
-            dcc.Input(id="tokenizer-id-2", value="DHL3B/DHL3B-tokenizer", className="form-control"),
+            dcc.Input(id="tokenizer-id-2", value=TOKS[1], className="form-control"),
         ], width=6),
     ], className="mb-3"),
 
@@ -32,7 +39,8 @@ layout = dbc.Container([
             dcc.Textarea(
                 id="input-text-0",
                 placeholder="Your prompt here: e.g., What is y if y=2*2-4+(3*2)",
-                value="the cat cat is on the mat mat",
+                #value="the cat cat is on the mat mat",
+                value=PROMPT,
                 className="form-control",
                 style={"height": "80px"}
             ),

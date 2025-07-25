@@ -229,6 +229,27 @@ def nwd(p, q, axis=-1, clip=1e-6):  # <-- Increase clip
     #print(f"[Distances] {distances} | \n[NWD] {distances/vocab_size} |\n")
     return distances / vocab_size
 
+def accuracy(preds, targets, topn):
+    top1 = preds[..., 0]
+    acc1 = (top1[:, :-1] == targets).astype(int)
+    acc_top1 = acc1.mean()
+
+    in_topn = np.any(preds[:, :-1] == targets[..., None], axis=-1).astype(int)
+    acc_topn = in_topn.mean()
+
+    return acc_top1, acc_topn, acc1.sum(), in_topn.sum()
+
+def stability(preds, targets):
+    seq_len = preds.shape[1]
+    num_layers = preds.shape[0]
+    stab = np.full(seq_len, fill_value=num_layers)
+    for t in range(seq_len):
+        for l in range(num_layers):
+            if preds[l, t] == targets[0, t]:
+                stab[t] = l
+                break
+    return stab
+
 
 def _topk_comparing_lens_fig(
     layer_logits,
@@ -492,6 +513,12 @@ def plot_topk_comparing_lens(
 ) -> go.Figure:
 
     metric_type = None
+
+    diagnostics = {
+    "model_1": {},
+    "model_2": {},
+    "comparison": {}
+    }
 
     if isinstance(inputs, str):
         inputs = [inputs]

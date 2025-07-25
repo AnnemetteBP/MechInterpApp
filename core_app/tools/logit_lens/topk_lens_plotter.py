@@ -22,7 +22,7 @@ from ..util.python_utils import make_print_if_verbose
 from .hooks import make_lens_hooks
 from .layer_names import make_layer_names
 from functools import lru_cache
-from quant_utils.ptq_configs.bitnet_ptq import apply_bitnet_ptq
+#from quant_utils.ptq_configs.bitnet_ptq import apply_bitnet_ptq
 
 DetectorFactory.seed = 0  # for reproducibility
 
@@ -868,7 +868,7 @@ def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
 
         elif '158' in quant_config:
             base_model = _load_ptq_model(model_id=model_id)
-            model = apply_bitnet_ptq(base_model, num_bits=8, use_ternary=True, act_bits=8)
+            #model = apply_bitnet_ptq(base_model, num_bits=8, use_ternary=True, act_bits=8)
     else:
         model = _load_model(model_id=model_id)
 
