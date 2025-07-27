@@ -79,8 +79,16 @@ layout = dbc.Container([
             dcc.Dropdown(
                 id="metric-type-0",
                 options=[
-                    {"label":"JS Divergence","value":"js"},
-                    {"label":"Normalized Wasserstein","value":"nwd"},
+                    {'label': 'Jensen-Shannon', 'value': 'js'},
+                    {'label': 'Wasserstein (NWD)', 'value': 'nwd'},
+                    {'label': 'Full Wasserstein (NWD)', 'value': 'full_nwd'},
+                    {'label': 'KL Divergence', 'value': 'kl'},
+                    {'label': 'Cosine Similarity', 'value': 'cosine'},
+                    {'label': 'Entropy Difference', 'value': 'entropy_diff'},
+                    {'label': 'Top-1 Match Ratio', 'value': 'match_ratio'},
+                    {'label': 'Rank Delta', 'value': 'rank_delta'},
+                    {'label': 'Jaccard Index (Top-k)', 'value': 'jaccard'},
+                    {'label': 'Variety (Top-1)', 'value': 'variety'},
                 ],
                 value="nwd",
                 clearable=False,
@@ -178,6 +186,23 @@ layout = dbc.Container([
         ], width=4),
     ], className="mb-4"),
 
+    dbc.Row([
+        dbc.Col([
+            html.Label("Aggregation Mode"),
+            dcc.Dropdown(
+                id="agg-mode-0",
+                options=[
+                    {"label": "None", "value": "none"},
+                    {"label": "Layer", "value": "layer"},
+                    {"label": "Position", "value": "position"},
+                ],
+                value="none",  # default value
+                clearable=False,
+                className="form-select"
+            ),
+        ], width=4),
+    ], className="mb-3"),
+
     # Graph row
     dbc.Row([
         dbc.Col([
@@ -209,6 +234,7 @@ layout = dbc.Container([
       Input("model-precision-0", "value"),
       Input("model-precision-00","value"),
       Input("deterministic",     "value"),
+      Input("agg-mode-0",        "value"),  
     ]
 )
 def update_logit_lens(
@@ -219,7 +245,7 @@ def update_logit_lens(
     start_ix, end_ix, top_k, metric,
     block_step, token_font_size, label_font_size,
     flags, decoder_layers, model_precision_1, model_precision_2,
-    deterministic
+    deterministic, agg_mode  
 ):
     if not n or not text:
         return go.Figure()
@@ -248,7 +274,9 @@ def update_logit_lens(
             end_ix               = end_ix,
             topk                 = top_k,
             topk_mean            = topk_mean,
-            js                   = (metric=="js"),
+            metric_type          = metric,
+            agg_mode             = agg_mode,
+            #js                   = (metric=="js"),
             block_step           = block_step,
             token_font_size      = token_font_size,
             label_font_size      = label_font_size,
