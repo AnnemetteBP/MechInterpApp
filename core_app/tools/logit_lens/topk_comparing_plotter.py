@@ -5,7 +5,6 @@ from pathlib import Path
 import torch
 import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-
 import matplotlib as mpl
 import scipy.special
 from scipy.stats import wasserstein_distance
@@ -15,9 +14,9 @@ import random
 from functools import lru_cache
 import plotly.graph_objects as go
 from ..util.python_utils import make_print_if_verbose
-
 from .hooks import make_lens_hooks
 from .layer_names import make_layer_names
+
 
 
 # ---------------------------
@@ -161,10 +160,11 @@ def collect_logits(model, input_ids, layer_names, decoder_layer_names=None):
 
 
 def postprocess_logits_topk(
-    layer_logits: np.ndarray,
-    normalize_probs: bool = False,
-    top_n: int = 5,
-    return_scores: bool = True,
+    layer_logits:np.ndarray,
+    normalize_probs:bool=False,
+    top_n:int=5,
+    return_scores:bool=True,
+    to_float:Optional[None|Any]=None
 ):
     """
     Inputs:
@@ -174,10 +174,14 @@ def postprocess_logits_topk(
         layer_probs: float array [L, T, V] or [L, B, T, V]
         top_n_scores: [L, T] or [L, B, T] (mean of top_n probs)
     """
+    assert to_float == None or to_float == np.float16 or to_float == np.float32
+
     if isinstance(layer_logits, torch.Tensor):
         layer_logits = layer_logits.cpu().numpy()
 
-    layer_logits = layer_logits.astype(np.float32)
+    if to_float is not None:
+        layer_logits = layer_logits.astype(to_float)
+        
     layer_logits = np.nan_to_num(layer_logits, nan=-1e9, posinf=1e9, neginf=-1e9)
 
     layer_probs = scipy.special.softmax(layer_logits, axis=-1)
@@ -783,7 +787,8 @@ def plot_topk_comparing_lens(
     pad_to_max_length:bool=False,
     model_precision_1:Optional[str]=None,
     model_precision_2:Optional[str]=None,
-    use_deterministic_backend:bool=False
+    use_deterministic_backend:bool=False,
+    safe_cast:Optional[Any|None]=None # np.float16 or np.float32 
 ) -> go.Figure:
     """ Plots the Comparing (Logit) Lens for topk """
 
@@ -838,8 +843,9 @@ def plot_topk_comparing_lens(
     layer_logits_1, _ = collect_logits(model_1, input_ids_1, layer_names_1)  # [L, T, V]
     layer_logits_2, _ = collect_logits(model_2, input_ids_2, layer_names_2)
 
-    layer_logits_1 = safe_cast_logits(torch.tensor(layer_logits_1)).cpu().numpy()
-    layer_logits_2 = safe_cast_logits(torch.tensor(layer_logits_2)).cpu().numpy()
+    if safe_cast is not None:
+        layer_logits_1 = safe_cast_logits(torch.tensor(layer_logits_1)).cpu().numpy()
+        layer_logits_2 = safe_cast_logits(torch.tensor(layer_logits_2)).cpu().numpy()
 
     layer_logits_1 = layer_logits_1[:, start_ix:end_ix, :]
     layer_logits_2 = layer_logits_2[:, start_ix:end_ix, :]
