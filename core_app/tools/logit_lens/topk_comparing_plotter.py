@@ -20,6 +20,9 @@ from .hooks import make_lens_hooks
 from .layer_names import make_layer_names
 
 
+# ---------------------------
+# Configs, Model Loading
+# ---------------------------
 def _set_deterministic_backend(seed:int=42) -> None:
     """ 
     Forces PyTorch to use only deterministic operations (e.g., disables non-deterministic GPU kernels).
@@ -32,23 +35,13 @@ def _set_deterministic_backend(seed:int=42) -> None:
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
-# ===================== Clear Cache ============================
-def clear_cuda_cache():
+def clear_cuda_cache() -> None:
     """Clear GPU cache to avoid memory errors during operations"""
     torch.cuda.empty_cache()
 
-def safe_cast_logits(tensor: torch.Tensor) -> torch.Tensor:
-    if tensor.dtype in [torch.float16, torch.bfloat16, torch.int8, torch.uint8]:
-        tensor = tensor.to(torch.float32)
-    return torch.nan_to_num(tensor, nan=-1e9, posinf=1e9, neginf=-1e9)
-
-def numpy_safe_cast(x):
-    x = x.astype(np.float32)
-    return np.nan_to_num(x, nan=-1e9, posinf=1e9, neginf=-1e9)
-
 # cache so not re-load on every callback
 @lru_cache(maxsize=2)
-def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
+def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
     tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
 
     if quant_config:
@@ -87,13 +80,31 @@ def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
 
     return model, tok
 
-# ===================== Tokenize input texts ============================
-def text_to_input_ids(tokenizer: Any, text: Union[str, List[str]], model: Optional[torch.nn.Module] = None, add_special_tokens: bool = True, pad_to_max_length=False) -> torch.Tensor:
+
+
+# ---------------------------
+# Safecasting 
+# ---------------------------
+def safe_cast_logits(tensor:torch.Tensor) -> torch.Tensor:
+    if tensor.dtype in [torch.float16, torch.bfloat16, torch.int8, torch.uint8]:
+        tensor = tensor.to(torch.float32)
+    return torch.nan_to_num(tensor, nan=-1e9, posinf=1e9, neginf=-1e9)
+
+def numpy_safe_cast(x:Any) -> Any:
+    x = x.astype(np.float32)
+    return np.nan_to_num(x, nan=-1e9, posinf=1e9, neginf=-1e9)
+
+
+
+# ---------------------------
+# Tokenize Inputs
+# ---------------------------
+def text_to_input_ids(tokenizer:Any, text:Union[str, List[str]], model:Optional[torch.nn.Module]=None, add_special_tokens:bool=True, pad_to_max_length=False) -> torch.Tensor:
     """
     Tokenize the inputs, respecting padding behavior.
     """
     if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token  # Ensure EOS token is used if padding is missing
+        tokenizer.pad_token = tokenizer.eos_token  # EOS
 
     is_single = isinstance(text, str)
     texts = [text] if is_single else text
@@ -101,11 +112,11 @@ def text_to_input_ids(tokenizer: Any, text: Union[str, List[str]], model: Option
     # Padding to the longest sequence in the batch or to max length
     tokens = tokenizer(
         texts,
-        return_tensors="pt",
-        padding="longest" if not pad_to_max_length else True,  # Padding only to longest sequence
+        return_tensors='pt',
+        padding='longest' if not pad_to_max_length else True,  # Padding only to longest sequence
         truncation=True,
         add_special_tokens=add_special_tokens,
-    )["input_ids"]
+    )['input_ids']
 
     if model is not None:
         device = next(model.parameters()).device
@@ -113,7 +124,11 @@ def text_to_input_ids(tokenizer: Any, text: Union[str, List[str]], model: Option
 
     return tokens  # shape: [batch_size, seq_len]
 
-# ===================== Layer Logits ============================
+
+
+# ---------------------------
+# Collect & Preprocess Logits
+# ---------------------------
 def collect_logits(model, input_ids, layer_names, decoder_layer_names=None):
     model._last_resid = None
 
@@ -187,17 +202,22 @@ def postprocess_logits_topk(
         return layer_preds, layer_probs
 
 
-def top1_to_onehot(preds: np.ndarray, vocab_size: int):
+def top1_to_onehot(preds:np.ndarray, vocab_size:int) -> Any:
     one_hot = np.zeros((*preds.shape, vocab_size), dtype=np.float32)
     it = np.nditer(preds, flags=['multi_index'])
     while not it.finished:
         idx = it.multi_index
         one_hot[idx][preds[idx]] = 1.0
         it.iternext()
+    
     return one_hot
 
-# ===================== Correctness ============================
-def compute_correctness_metrics(layer_preds, target_ids, topk_indices=None):
+
+
+# ---------------------------
+# Correctness / Accuracy & Stability
+# ---------------------------
+def compute_correctness_metrics(layer_preds:Any, target_ids:Any, topk_indices=None) -> Tuple[Any,Any|None]:
     correct_1 = (layer_preds[-1] == target_ids).astype(int)
 
     if topk_indices is not None:
@@ -209,55 +229,81 @@ def compute_correctness_metrics(layer_preds, target_ids, topk_indices=None):
 
     return correct_1, correct_topk
 
-# ===================== Clipping and metric helpers ============================
-def compute_kl_divergence(logits1, logits2):
+
+def accuracy(preds:Any, targets:Any, topn:Any) -> Tuple[Any,Any,Any,Any]:
+    top1 = preds[..., 0]
+    acc1 = (top1[:, :-1] == targets).astype(int)
+    acc_top1 = acc1.mean()
+
+    in_topn = np.any(preds[:, :-1] == targets[..., None], axis=-1).astype(int)
+    acc_topn = in_topn.mean()
+
+    return acc_top1, acc_topn, acc1.sum(), in_topn.sum()
+
+def stability(preds:Any, targets:Any) -> np.ndarray:
+    seq_len = preds.shape[1]
+    num_layers = preds.shape[0]
+    stab = np.full(seq_len, fill_value=num_layers)
+    
+    for t in range(seq_len):
+        for l in range(num_layers):
+            if preds[l, t] == targets[0, t]:
+                stab[t] = l
+                break
+    
+    return stab
+
+
+
+# ---------------------------
+# Metrics & Clipping Helpers
+# ---------------------------
+def compute_kl_divergence(logits1:Any, logits2:Any) -> Any:
     probs1 = scipy.special.softmax(logits1, axis=-1)
     probs2 = scipy.special.softmax(logits2, axis=-1)
     return np.sum(kl_div(probs1, probs2), axis=-1)
 
-def get_value_at_preds(values, preds):
+def get_value_at_preds(values:Any, preds:Any) -> Any:
     return np.stack([values[:, j, preds[j]] for j in range(preds.shape[-1])], axis=-1)
 
-def num2tok(x, tokenizer, quotemark=""):
+def num2tok(x:Any, tokenizer:Any, quotemark="") -> Any:
     return quotemark + str(tokenizer.decode([x])) + quotemark
 
-def compute_entropy(probs):
+def compute_entropy(probs:Any) -> Any:
     log_probs = np.log(np.clip(probs, 1e-10, 1.0))
     return -np.sum(probs * log_probs, axis=-1)
 
-def maybe_batchify(p):
-    """ Normalize shape """
+def maybe_batchify(p:Any) -> Any:
     if p.ndim == 2:
         p = np.expand_dims(p, 0)
     return p
 
-def min_max_scale(arr, new_min, new_max):
+def min_max_scale(arr:Any, new_min:Any, new_max:Any) -> Any:
     """Scales an array to a new range [new_min, new_max] for plotting and comparison of normalized values across models."""
     old_min, old_max = np.min(arr), np.max(arr)
     return (arr - old_min) / (old_max - old_min) * (new_max - new_min) + new_min if old_max > old_min else arr
 
-def clipmin(x, clip):
+def clipmin(x:Any, clip:Any) -> Any:
     return np.clip(x, a_min=clip, a_max=None)
 
-def kl_summand(p, q, clip=1e-16):
+def kl_summand(p:Any, q:Any, clip=1e-16) -> Any:
     p, q = clipmin(p, clip), clipmin(q, clip)
     return p * np.log(p / q)
 
-def kl_divergence(p, q, axis=-1, clip=1e-16):
+def kl_divergence(p:Any, q:Any, axis=-1, clip=1e-16) -> Any:
     return np.sum(kl_summand(p, q, clip=clip), axis=axis)
 
-def js_divergence(p, q, axis=-1, clip=1e-16):
+def js_divergence(p:Any, q:Any, axis=-1, clip=1e-16) -> Any:
     """Computes Jensen-Shannon divergence between two probability distributions."""
     p, q = clipmin(p, clip), clipmin(q, clip)
     m = (p + q) / 2
     return (kl_divergence(p, m, axis=axis, clip=clip) + kl_divergence(q, m, axis=axis, clip=clip)) / 2
 
-def comput_entropy(p, axis=-1, clip=1e-16):
+def comput_entropy(p:Any, axis=-1, clip=1e-16) -> Any:
     p = clipmin(p, clip)
     return -np.sum(p * np.log(p), axis=axis)
 
-def nwd(p, q, axis=-1, clip=1e-16):
-#def nwd(p, q, axis=-1, clip=1e-16):
+def nwd(p:Any, q:Any, axis=-1, clip=1e-16) -> Any:
     """Computes normalized Wasserstein distance between two probability distributions."""
     p, q = np.clip(p, clip, 1.0), np.clip(q, clip, 1.0)
 
@@ -289,28 +335,11 @@ def nwd(p, q, axis=-1, clip=1e-16):
     distances = distances.reshape(p.shape[0], p.shape[1])
     return distances / vocab_size
 
-def accuracy(preds, targets, topn):
-    top1 = preds[..., 0]
-    acc1 = (top1[:, :-1] == targets).astype(int)
-    acc_top1 = acc1.mean()
-
-    in_topn = np.any(preds[:, :-1] == targets[..., None], axis=-1).astype(int)
-    acc_topn = in_topn.mean()
-
-    return acc_top1, acc_topn, acc1.sum(), in_topn.sum()
-
-def stability(preds, targets):
-    seq_len = preds.shape[1]
-    num_layers = preds.shape[0]
-    stab = np.full(seq_len, fill_value=num_layers)
-    for t in range(seq_len):
-        for l in range(num_layers):
-            if preds[l, t] == targets[0, t]:
-                stab[t] = l
-                break
-    return stab
 
 
+# ---------------------------
+# Metrics & Computation Configs
+# ---------------------------
 METRIC_REGISTRY = {
     "js":            {"type": "prob",  "topk": True,  "title": "Jensen–Shannon divergence", "cmap": "Blues"},
     "nwd":           {"type": "prob",  "topk": True,  "title": "Normalized Wasserstein distance (top-k)", "cmap": "Blues"},
@@ -326,42 +355,14 @@ METRIC_REGISTRY = {
 }
 
 
-def resolve_metric_type(metric_type: str):
+def resolve_metric_type(metric_type:str) -> Any:
     info = METRIC_REGISTRY.get(metric_type)
     if info is None:
         raise ValueError(f"Unsupported metric: {metric_type}")
-    return info.get("alias", metric_type), info
+    return info.get('alias', metric_type), info
 
 
-def safe_aggregate_metrics(value_matrix_3d: np.ndarray, agg_mode: str) -> np.ndarray:
-    """
-    Aggregate safely along batch dimension.
-
-    Args:
-        value_matrix_3d: np.ndarray with shape (layers, batch, tokens)
-        agg_mode: "none" or "batch"
-
-    Returns:
-        If agg_mode == "none":
-            returns value_matrix_3d as is (L, B, T)
-        If agg_mode == "batch":
-            returns (L, T) by averaging over batch dim
-    """
-    if value_matrix_3d.size == 0:
-        raise ValueError(f"Input is empty with shape {value_matrix_3d.shape}")
-
-    if agg_mode == "none":
-        return value_matrix_3d
-    elif agg_mode == "batch":
-        # Check dims
-        if value_matrix_3d.ndim != 3:
-            raise ValueError(f"Expected 3D array but got shape {value_matrix_3d.shape}")
-        return value_matrix_3d.mean(axis=1)  # mean over batch axis
-    else:
-        raise ValueError(f"Unknown agg_mode: {agg_mode}")
-
-
-def add_batch_dim(arr: np.ndarray) -> np.ndarray:
+def add_batch_dim(arr:np.ndarray) -> np.ndarray:
     """
     Add batch dimension if missing:
     Accepts shapes (L, T), (L, T, V), or (L, T) without batch dim,
@@ -378,12 +379,11 @@ def add_batch_dim(arr: np.ndarray) -> np.ndarray:
     elif arr.ndim == 2:  # e.g. (L, T)
         return np.expand_dims(arr, axis=1)  # (L, 1, T)
     elif arr.ndim == 4 or arr.ndim == 3:
-        # Already has batch dim (for your usage), pass as is
         return arr
     else:
         raise ValueError(f"Unexpected ndim={arr.ndim} for array shape {arr.shape}")
 
-def strip_batch_dim(arr: np.ndarray) -> np.ndarray:
+def strip_batch_dim(arr:np.ndarray) -> np.ndarray:
     """
     Strip batch dimension if it exists: from (L, 1, T) → (L, T)
     """
@@ -391,54 +391,13 @@ def strip_batch_dim(arr: np.ndarray) -> np.ndarray:
         return arr[:, 0, :]
     return arr
 
-def aggregate_metrics(arr: np.ndarray, agg_mode: str):
-    if agg_mode == "none":
-        return arr
-    elif agg_mode == "layer":
-        return arr.mean(axis=0)  # mean over layers, shape depends on input dims
-    elif agg_mode == "position":
-        if arr.ndim == 3:
-            return arr.mean(axis=2)
-        elif arr.ndim == 2:
-            return arr.mean(axis=1)
-        else:
-            raise ValueError(f"Unexpected ndim={arr.ndim} in aggregation")
-    else:
-        raise ValueError(f"Unknown agg_mode: {agg_mode}")
 
-def aggregate_metric_matrix(matrix: np.ndarray, agg_mode: str):
-    """
-    Aggregate the metric matrix according to agg_mode.
-
-    Args:
-        matrix: np.ndarray of shape (L, T)
-        agg_mode: 'none', 'layer', or 'position'
-
-    Returns:
-        Aggregated matrix or vector.
-    """
-    if agg_mode == "none":
-        return matrix  # NO aggregation, just return as is
-    elif agg_mode == "layer":
-        # mean over layers (axis=0) -> shape (T,)
-        return matrix.mean(axis=0)
-    elif agg_mode == "position":
-        # mean over tokens (axis=1) -> shape (L,)
-        return matrix.mean(axis=1)
-    else:
-        raise ValueError(f"agg_mode '{agg_mode}' not supported")
-
-
-
-# ---------------------------
-# Metric computation (per layer)
-# ---------------------------
 def compute_comparison_metric(
-    metric_type: str,
-    layer_probs_1: np.ndarray,  # [B, T, V]
-    layer_probs_2: np.ndarray,  # [B, T, V]
-    layer_preds_1: np.ndarray,  # [B, T]
-    layer_preds_2: np.ndarray,  # [B, T]
+    metric_type:str,
+    layer_probs_1:np.ndarray,  # [B, T, V]
+    layer_probs_2:np.ndarray,  # [B, T, V]
+    layer_preds_1:np.ndarray,  # [B, T]
+    layer_preds_2:np.ndarray,  # [B, T]
     topk: int
 ) -> np.ndarray:
     """
@@ -446,12 +405,12 @@ def compute_comparison_metric(
     """
     metric_type, meta = resolve_metric_type(metric_type)
 
-    if meta["topk"] and (topk is None or topk <= 0):
+    if meta['topk'] and (topk is None or topk <= 0):
         raise ValueError(f"Metric '{metric_type}' requires top-k > 0.")
 
     B, T, V = layer_probs_1.shape
 
-    if metric_type == "js":
+    if metric_type == 'js':
         # Take top-k of model_2 to align supports
         topk_idx = np.argsort(layer_probs_2, axis=-1)[..., -topk:]
         p1 = np.take_along_axis(layer_probs_1, topk_idx, axis=-1)
@@ -460,7 +419,7 @@ def compute_comparison_metric(
         p2 = p2 / np.clip(p2.sum(axis=-1, keepdims=True), 1e-10, 1.0)
         return js_divergence(p1, p2, axis=-1)
 
-    elif metric_type == "nwd":
+    elif metric_type == 'nwd':
         topk_idx = np.argsort(layer_probs_1 + layer_probs_2, axis=-1)[..., -topk:]
         p1 = np.take_along_axis(layer_probs_1, topk_idx, axis=-1)
         p2 = np.take_along_axis(layer_probs_2, topk_idx, axis=-1)
@@ -468,25 +427,25 @@ def compute_comparison_metric(
         p2 = p2 / np.clip(p2.sum(axis=-1, keepdims=True), 1e-10, 1.0)
         return nwd(p1, p2)
 
-    elif metric_type == "full_nwd":
+    elif metric_type == 'full_nwd':
         p1 = layer_probs_1 / np.clip(layer_probs_1.sum(axis=-1, keepdims=True), 1e-10, 1.0)
         p2 = layer_probs_2 / np.clip(layer_probs_2.sum(axis=-1, keepdims=True), 1e-10, 1.0)
         return nwd(p1, p2)
 
-    elif metric_type == "kl":
+    elif metric_type == 'kl':
         p = layer_probs_1 / np.clip(layer_probs_1.sum(axis=-1, keepdims=True), 1e-10, 1.0)
         q = layer_probs_2 / np.clip(layer_probs_2.sum(axis=-1, keepdims=True), 1e-10, 1.0)
         return kl_divergence(p, q, axis=-1)
 
-    elif metric_type == "entropy_gap":
+    elif metric_type == 'entropy_gap':
         H1 = comput_entropy(layer_probs_1, axis=-1)
         H2 = comput_entropy(layer_probs_2, axis=-1)
         return H1 - H2
 
-    elif metric_type == "agreement":
+    elif metric_type == 'agreement':
         return (layer_preds_1 == layer_preds_2).astype(np.float32)
 
-    elif metric_type == "jaccard":
+    elif metric_type == 'jaccard':
         # set-based over top-k indices
         topk_1 = np.argsort(layer_probs_1, axis=-1)[..., -topk:]
         topk_2 = np.argsort(layer_probs_2, axis=-1)[..., -topk:]
@@ -500,7 +459,7 @@ def compute_comparison_metric(
                 out[b, t] = inter / max(uni, 1e-6)
         return out
 
-    elif metric_type == "rank_delta":
+    elif metric_type == 'rank_delta':
         # ranks: lower is better
         ranks_1 = np.argsort(np.argsort(-layer_probs_1, axis=-1), axis=-1)
         ranks_2 = np.argsort(np.argsort(-layer_probs_2, axis=-1), axis=-1)
@@ -510,15 +469,15 @@ def compute_comparison_metric(
         r2 = np.take_along_axis(ranks_2, idx, axis=-1).squeeze(-1)
         return np.abs(r1 - r2).astype(np.float32)
 
-    elif metric_type == "cosine":
+    elif metric_type == 'cosine':
         dot = np.sum(layer_probs_1 * layer_probs_2, axis=-1)
         n1 = np.linalg.norm(layer_probs_1, axis=-1)
         n2 = np.linalg.norm(layer_probs_2, axis=-1)
         return dot / np.clip(n1 * n2, 1e-10, None)
 
-    elif metric_type == "variety":
+    elif metric_type == 'variety':
         # how many unique top-1 preds appeared across layers is not computable per single layer (needs all layers)
-        # we compute per position after stacking in get_metric_matrix, so here just return zeros (placeholder)
+        # compute per position after stacking in get_metric_matrix, so here just returning zeros (placeholder)
         return np.zeros((B, T), dtype=np.float32)
 
     else:
@@ -526,13 +485,13 @@ def compute_comparison_metric(
 
 
 def get_metric_matrix(
-    metric_type: str,
-    all_layer_probs_1: np.ndarray,  # [L, B, T, V]
-    all_layer_probs_2: np.ndarray,  # [L, B, T, V]
-    all_layer_preds_1: np.ndarray,  # [L, B, T]
-    all_layer_preds_2: np.ndarray,  # [L, B, T]
-    topk: int = None,
-    agg_mode: str = "none"  # "layer", "position", or "none"
+    metric_type:str,
+    all_layer_probs_1:np.ndarray,  
+    all_layer_probs_2:np.ndarray,  
+    all_layer_preds_1:np.ndarray,  
+    all_layer_preds_2:np.ndarray,  
+    topk:int=None,
+    agg_mode:str='none'  # "layer", "position", or "none"
 ) -> np.ndarray:
     """
     Compute metric matrix with shape [L, T].
@@ -546,9 +505,9 @@ def get_metric_matrix(
     for l in range(L):
         v = compute_comparison_metric(
             metric_type,
-            all_layer_probs_1[l],  # [B, T, V]
+            all_layer_probs_1[l],  
             all_layer_probs_2[l],
-            all_layer_preds_1[l],  # [B, T]
+            all_layer_preds_1[l], 
             all_layer_preds_2[l],
             topk
         )  # [B, T]
@@ -556,7 +515,7 @@ def get_metric_matrix(
 
     metric_matrix = np.stack(vals, axis=0)  # [L, B, T]
 
-    if metric_type == "variety":
+    if metric_type == 'variety':
         # Custom handling for variety: # of unique preds at each position
         unique_counts = np.zeros((B, T), dtype=np.float32)
         for b in range(B):
@@ -582,63 +541,70 @@ def get_metric_matrix(
 
     else:
         raise ValueError(f"Invalid agg_mode: {agg_mode}")"""
-    if agg_mode == "none":
+    if agg_mode == 'none':
         # average over batch only → shape [L, T]
         return metric_matrix.mean(axis=1)
 
-    elif agg_mode == "layer":
+    elif agg_mode == 'layer':
         # average over batch and tokens → shape [L]
         avg = metric_matrix.mean(axis=(1, 2))
         return np.tile(avg[:, None], (1, T))
 
-    elif agg_mode == "position":
+    elif agg_mode == 'position':
         # average over batch and layers → shape [T]
         avg = metric_matrix.mean(axis=(0, 1))
         return np.tile(avg[None, :], (L, 1))
 
     else:
         raise ValueError(f"Invalid agg_mode: {agg_mode}")
-    
-def mm_scale(arr, new_min=0, new_max=1):
+
+
+
+# ---------------------------
+# Plotting
+# ---------------------------
+def mm_scale(arr:Any, new_min:int=0, new_max:int=1) -> Any:
     arr = np.array(arr)
     arr_min = arr.min()
     arr_max = arr.max()
+
     if arr_max == arr_min:
         return np.full_like(arr, (new_min + new_max) / 2)
+    
     return (arr - arr_min) / (arr_max - arr_min) * (new_max - new_min) + new_min
 
 
 def _topk_comparing_lens_fig(
-    layer_logits,        # [L, T, V]
-    layer_preds,         # [L, T]
-    layer_probs,         # [L, T, V]
-    topk_scores,         # [L, T]  (mean score returned, not used directly here)
-    topk_indices,        # [L, T, K]
-    tokenizer,
-    input_ids,           # torch tensor [B, SeqLen]
-    start_ix,
-    layer_names: List[str],
-    top_k: int = 5,
-    normalize: bool = True,
-    metric_type: Optional[str] = None,
-    value_matrix: Optional[np.ndarray] = None,  # [L, T]
-    title: Optional[str] = None,
-    map_color: Optional[str] = None,
-    block_step: int = 1,
-    token_font_size: int = 12,
-    label_font_size: int = 20,
-    agg_mode:str="none",
+    layer_logits:Any,       
+    layer_preds:Any,      
+    layer_probs:Any,        
+    topk_scores:Any,  
+    topk_indices:Any,       
+    tokenizer:Any,
+    input_ids:Any,         
+    start_ix:int,
+    layer_names:List[str],
+    top_k:int=5,
+    normalize:bool=True,
+    metric_type:Optional[str]=None,
+    value_matrix:Optional[np.ndarray]=None,  # [L, T]
+    title:Optional[str]=None,
+    map_color:Optional[str]=None,
+    block_step:int=1,
+    token_font_size:int=12,
+    label_font_size:int=20,
+    agg_mode:str='none',
 ) -> go.Figure:
 
     if metric_type is not None and metric_type in METRIC_REGISTRY:
         reg = METRIC_REGISTRY[metric_type]
         if title is None:
-            title = reg.get("title", metric_type)
+            title = reg.get('title', metric_type)
         if map_color is None:
-            map_color = reg.get("cmap", "Cividis")
+            map_color = reg.get('cmap', 'Cividis')
     else:
         title = title or "Top-k mean prob"
-        map_color = map_color or "Cividis"
+        map_color = map_color or 'Cividis'
 
     L, T, V = layer_logits.shape
     end_ix = start_ix + T
@@ -658,7 +624,7 @@ def _topk_comparing_lens_fig(
     assert value_matrix is not None, "value_matrix must be provided"
     assert value_matrix.shape == (L, T), f"value_matrix must be [L,T], got {value_matrix.shape}"
 
-    # Optionally normalize before plotting
+    # normalize before plotting
     if normalize:
         value_matrix = mm_scale(value_matrix, 0, 1)
 
@@ -733,11 +699,11 @@ def _topk_comparing_lens_fig(
     cy, cx = np.where(is_correct == 1)
     for y, x in zip(cy, cx):
         fig.add_shape(
-            type="rect",
+            type='rect',
             x0=x - 0.5, x1=x + 0.5,
             y0=y - 0.5, y1=y + 0.5,
-            line=dict(color="black", width=2),
-            layer="above"
+            line=dict(color='black', width=2),
+            layer='above'
         )
 
     # Overlay scatter for top axis
@@ -789,32 +755,37 @@ def _topk_comparing_lens_fig(
     return fig
 
 
+
+# ---------------------------
+# Comparing (Logit) Lens Plotter
+# ---------------------------
 def plot_topk_comparing_lens(
-    model_1: Any,
-    model_2: Any,
-    tokenizer_1: Any,
-    tokenizer_2: Any,
-    inputs: Union[str, List[str], None],
-    start_ix: int,
-    end_ix: int,
-    topk: int = 5,
-    topk_mean: bool = True,
-    metric_type: Optional[str] = None,
-    agg_mode: str = "none",  # "none", "layer", "position"
-    block_step: int = 1,
-    token_font_size: int = 12,
-    label_font_size: int = 20,
-    include_input: bool = True,
-    force_include_output: bool = True,
-    include_subblocks: bool = False,
-    decoder_layer_names: List[str] = ['norm', 'lm_head'],
-    top_down: bool = False,
-    verbose: bool = False,
-    pad_to_max_length: bool = False,
-    model_precision_1: Optional[str] = None,
-    model_precision_2: Optional[str] = None,
-    use_deterministic_backend: bool = False
+    model_1:Any,
+    model_2:Any,
+    tokenizer_1:Any,
+    tokenizer_2:Any,
+    inputs:Union[str, List[str], None],
+    start_ix:int,
+    end_ix:int,
+    topk:int=5,
+    topk_mean:bool=True,
+    metric_type:Optional[str]=None,
+    agg_mode:str='none',  # "none", "layer", "position"
+    block_step:int=1,
+    token_font_size:int=12,
+    label_font_size:int=20,
+    include_input:bool=True,
+    force_include_output:bool=True,
+    include_subblocks:bool=False,
+    decoder_layer_names:List[str] = ['norm', 'lm_head'],
+    top_down:bool=False,
+    verbose:bool=False,
+    pad_to_max_length:bool=False,
+    model_precision_1:Optional[str]=None,
+    model_precision_2:Optional[str]=None,
+    use_deterministic_backend:bool=False
 ) -> go.Figure:
+    """ Plots the Comparing (Logit) Lens for topk """
 
     topk = 1 if topk < 1 else topk
     topk_mean = False if topk == 1 else topk_mean
@@ -882,7 +853,6 @@ def plot_topk_comparing_lens(
     layer_probs_1 = np.nan_to_num(layer_probs_1, nan=1e-10, posinf=1.0, neginf=0.0)
     layer_probs_2 = np.nan_to_num(layer_probs_2, nan=1e-10, posinf=1.0, neginf=0.0)
 
-
     # ---- add batch dim (L, 1, T)
     layer_probs_1_b = add_batch_dim(layer_probs_1)
     layer_probs_2_b = add_batch_dim(layer_probs_2)
@@ -896,49 +866,11 @@ def plot_topk_comparing_lens(
         all_layer_preds_1=layer_preds_1_b,
         all_layer_preds_2=layer_preds_2_b,
         topk=topk,
-        #agg_mode="none"  # compute full matrix first
+        #agg_mode='none'
         agg_mode=agg_mode
     )
 
-    #value_matrix_3d_squeezed = value_matrix_3d.squeeze(1)  # shape: (L, T)
-    #L, T = value_matrix_3d_squeezed.shape
-
-    """if agg_mode == "none":
-        value_matrix = value_matrix_3d_squeezed  # (L, T), no change
-    elif agg_mode == "layer":
-        # average over layers (axis=0) → shape (T,)
-        mean_over_layers = value_matrix_3d_squeezed.mean(axis=0)  
-        # Broadcast rows → repeat mean vector as rows for each layer: shape (L, T)
-        value_matrix = np.tile(mean_over_layers[np.newaxis, :], (L, 1))
-    elif agg_mode == "position":
-        # average over positions/tokens (axis=1) → shape (L,)
-        mean_over_positions = value_matrix_3d_squeezed.mean(axis=1)
-        # Broadcast columns → repeat mean vector as columns for each token: shape (L, T)
-        value_matrix = np.tile(mean_over_positions[:, np.newaxis], (1, T))
-    else:
-        raise ValueError(f"Unknown agg_mode: {agg_mode}")"""
-    
-    """if agg_mode == "none":
-        value_matrix = value_matrix_3d_squeezed  # [L, T]
-    elif agg_mode == "layer":
-        # Already shape [T]; expand to [L, T]
-        value_matrix = np.tile(value_matrix_3d_squeezed[np.newaxis, :], (L, 1))
-    elif agg_mode == "position":
-        # Already shape [L]; expand to [L, T]
-        value_matrix = np.tile(value_matrix_3d_squeezed[:, np.newaxis], (1, T))
-    else:
-        raise ValueError(f"Unknown agg_mode: {agg_mode}")
-
-
-    # ---- get top-k indices for hover
-    topk_indices = None
-    if topk is not None and topk > 0:
-        if layer_probs_2.ndim >= 3:
-            topk_indices = np.argsort(layer_probs_2, axis=-1)[..., -topk:][..., ::-1]
-        elif layer_probs_2.ndim == 2:
-            topk_indices = np.argsort(layer_probs_2, axis=-1)[..., -topk:][..., ::-1]"""
-    
-    value_matrix = value_matrix_3d  # already [L, T], no squeezing or tiling
+    value_matrix = value_matrix_3d
 
     # ---- get top-k indices for hover
     topk_indices = None
@@ -947,7 +879,6 @@ def plot_topk_comparing_lens(
             topk_indices = np.argsort(layer_probs_2, axis=-1)[..., -topk:][..., ::-1]
         elif layer_probs_2.ndim == 2:
             topk_indices = np.argsort(layer_probs_2, axis=-1)[..., -topk:][..., ::-1]
-
 
     # ---- plot
     fig = _topk_comparing_lens_fig(
