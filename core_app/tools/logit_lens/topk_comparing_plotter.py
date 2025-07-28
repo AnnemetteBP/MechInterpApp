@@ -787,9 +787,11 @@ def plot_topk_comparing_lens(
 ) -> go.Figure:
     """ Plots the Comparing (Logit) Lens for topk """
 
+    # ---- topk, topk mean
     topk = 1 if topk < 1 else topk
     topk_mean = False if topk == 1 else topk_mean
 
+    # ---- inputs
     if isinstance(inputs, str):
         inputs = [inputs]
     elif inputs is None:
@@ -799,6 +801,7 @@ def plot_topk_comparing_lens(
     model_1, tokenizer_1 = _load_model_tokenizer(model_1, tokenizer_1, model_precision_1)
     model_2, tokenizer_2 = _load_model_tokenizer(model_2, tokenizer_2, model_precision_2)
 
+    # ---- suppress errors (for some models), set deterministic backend if needed
     import torch._dynamo
     torch._dynamo.config.suppress_errors = True
     if use_deterministic_backend:
@@ -841,7 +844,7 @@ def plot_topk_comparing_lens(
     layer_logits_1 = layer_logits_1[:, start_ix:end_ix, :]
     layer_logits_2 = layer_logits_2[:, start_ix:end_ix, :]
 
-    # ---- postprocess (keep your original function AS IS)
+    # ---- postprocess
     if topk_mean:
         layer_preds_1, layer_probs_1, _ = postprocess_logits_topk(layer_logits_1, top_n=topk, return_scores=True)
         layer_preds_2, layer_probs_2, _ = postprocess_logits_topk(layer_logits_2, top_n=topk, return_scores=True)
