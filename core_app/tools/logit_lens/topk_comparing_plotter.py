@@ -174,7 +174,7 @@ def postprocess_logits_topk(
         layer_probs: float array [L, T, V] or [L, B, T, V]
         top_n_scores: [L, T] or [L, B, T] (mean of top_n probs)
     """
-    assert to_float == None or to_float == np.float16 or to_float == np.float32
+    assert to_float == None or to_float == np.float32
 
     if isinstance(layer_logits, torch.Tensor):
         layer_logits = layer_logits.cpu().numpy()
@@ -788,9 +788,11 @@ def plot_topk_comparing_lens(
     model_precision_1:Optional[str]=None,
     model_precision_2:Optional[str]=None,
     use_deterministic_backend:bool=False,
-    safe_cast:Optional[Any|None]=None # np.float16 or np.float32 
+    safe_cast:Optional[Any|None]=None # np.float32 
 ) -> go.Figure:
     """ Plots the Comparing (Logit) Lens for topk """
+
+    assert safe_cast == None or safe_cast == np.float32
 
     # ---- topk, topk mean
     topk = 1 if topk < 1 else topk
@@ -852,11 +854,11 @@ def plot_topk_comparing_lens(
 
     # ---- postprocess
     if topk_mean:
-        layer_preds_1, layer_probs_1, _ = postprocess_logits_topk(layer_logits_1, top_n=topk, return_scores=True)
-        layer_preds_2, layer_probs_2, _ = postprocess_logits_topk(layer_logits_2, top_n=topk, return_scores=True)
+        layer_preds_1, layer_probs_1, _ = postprocess_logits_topk(layer_logits_1, top_n=topk, return_scores=True, to_float=safe_cast)
+        layer_preds_2, layer_probs_2, _ = postprocess_logits_topk(layer_logits_2, top_n=topk, return_scores=True, to_float=safe_cast)
     else:
-        layer_preds_1, layer_probs_1 = postprocess_logits_topk(layer_logits_1, top_n=1, return_scores=False)
-        layer_preds_2, layer_probs_2 = postprocess_logits_topk(layer_logits_2, top_n=1, return_scores=False)
+        layer_preds_1, layer_probs_1 = postprocess_logits_topk(layer_logits_1, top_n=1, return_scores=False, to_float=safe_cast)
+        layer_preds_2, layer_probs_2 = postprocess_logits_topk(layer_logits_2, top_n=1, return_scores=False, to_float=safe_cast)
 
     # ---- fix NaNs
     layer_probs_1 = np.nan_to_num(layer_probs_1, nan=1e-10, posinf=1.0, neginf=0.0)

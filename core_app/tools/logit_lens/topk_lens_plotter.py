@@ -317,7 +317,7 @@ def postprocess_logits_topk(
         to_float:Optional[None|Any]=None
 ) -> Tuple[Any, Any, Any]:
 
-    assert to_float == None or to_float == np.float16 or to_float == np.float32
+    assert to_float == None or to_float == np.float32
 
     if to_float is not None:
         layer_logits = layer_logits.astype(to_float)
@@ -908,9 +908,11 @@ def plot_topk_logit_lens(
     model_precision:Optional[str|None]=None,
     use_deterministic_backend:bool=False,
     json_log_path:str|None=None,
-    safe_cast:Optional[Any|None]=None # np.float16 or np.float32 
+    safe_cast:Optional[Any|None]=None # np.float32 
 ) -> go.Figure:
     """ Plot topk Logit Lens """
+
+    assert safe_cast == None or safe_cast == np.float32
 
     # ---- load model, tokenizer
     model, tokenizer = _load_model_tokenizer(model_path, tokenizer_path, model_precision)
