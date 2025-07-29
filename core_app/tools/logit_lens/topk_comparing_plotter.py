@@ -38,23 +38,23 @@ def clear_cuda_cache() -> None:
     """Clear GPU cache to avoid memory errors during operations"""
     torch.cuda.empty_cache()
 
-# cache so not re-load on every callback
+
 @lru_cache(maxsize=2)
 def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
-    tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(tok_id, trust_remote_code=True)
 
     if quant_config:
         if '4' in quant_config:
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
-                bnb_4bit_quant_type='nf4',       # or 'fp4'
-                #bnb_4bit_compute_dtype='float16'
+                bnb_4bit_use_double_quant=(quant_config == 'ptsq4bit'),
+                bnb_4bit_quant_type='nf4',
+                bnb_4bit_compute_dtype=torch.float16  
             )
         elif '8' in quant_config:
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
-                #bnb_4bit_compute_dtype='float16'
+                bnb_4bit_compute_dtype=torch.float16  
             )
         
         model = AutoModelForCausalLM.from_pretrained(
@@ -84,14 +84,28 @@ def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None) -> Tu
 # ---------------------------
 # Safecasting 
 # ---------------------------
+"""def safe_cast_logits(tensor:torch.Tensor) -> torch.Tensor:
+    if tensor.dtype in [torch.float16, torch.bfloat16, torch.int8, torch.uint8]:
+        tensor = tensor.to(torch.float32)
+    return torch.nan_to_num(tensor, nan=-1e9, posinf=1e9, neginf=-1e9)"""
 def safe_cast_logits(tensor:torch.Tensor) -> torch.Tensor:
     if tensor.dtype in [torch.float16, torch.bfloat16, torch.int8, torch.uint8]:
         tensor = tensor.to(torch.float32)
-    return torch.nan_to_num(tensor, nan=-1e9, posinf=1e9, neginf=-1e9)
 
+    tensor = torch.nan_to_num(tensor, nan=-1e9, posinf=1e9, neginf=-1e9)
+
+    # Clamp extreme values just in case
+    tensor = torch.clamp(tensor, min=-1e5, max=1e5)
+    return tensor
+
+
+"""def numpy_safe_cast(x:Any) -> Any:
+    x = x.astype(np.float32)
+    return np.nan_to_num(x, nan=-1e9, posinf=1e9, neginf=-1e9)"""
 def numpy_safe_cast(x:Any) -> Any:
     x = x.astype(np.float32)
-    return np.nan_to_num(x, nan=-1e9, posinf=1e9, neginf=-1e9)
+    x = np.nan_to_num(x, nan=-1e9, posinf=1e9, neginf=-1e9)
+    return np.clip(x, -1e5, 1e5)
 
 
 
@@ -118,17 +132,22 @@ def text_to_input_ids(tokenizer:Any, text:Union[str, List[str]], model:Optional[
     )['input_ids']
 
     if model is not None:
-        device = next(model.parameters()).device
+        device = getattr(model, 'device', None)
+        if device is None:
+            try:
+                device = next(model.parameters()).device
+            except:
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         tokens = tokens.to(device)
 
-    return tokens  # shape: [batch_size, seq_len]
+    return tokens  # [batch_size, seq_len]
 
 
 
 # ---------------------------
 # Collect & Preprocess Logits
 # ---------------------------
-def collect_logits(model, input_ids, layer_names, decoder_layer_names=None):
+"""def collect_logits(model, input_ids, layer_names, decoder_layer_names=None):
     model._last_resid = None
 
     # Force the model to store logits via hooks during the forward pass
@@ -156,7 +175,45 @@ def collect_logits(model, input_ids, layer_names, decoder_layer_names=None):
     # Final shape: (num_layers, seq_len, vocab_size)
     layer_logits = np.stack(logits_by_layer, axis=0)
 
-    return layer_logits, layer_names
+    return layer_logits, layer_names"""
+def collect_logits(model:Any, input_ids:Any, layer_names:Any, decoder_layer_names:Any|None=None) -> Tuple[Any,Any]:
+    model._last_resid = None
+
+    with torch.no_grad():
+        _ = model(input_ids, output_hidden_states=True)
+
+    model._last_resid = None
+
+    logits_by_layer = []
+    valid_layer_names = []
+    for name in layer_names:
+        layer_output = model._layer_logits.get(name)
+        if layer_output is None:
+            raise ValueError(f"Missing logits for layer: {name}")
+
+        # Convert to numpy if tensor
+        if isinstance(layer_output, torch.Tensor):
+            layer_output = layer_output.detach().cpu().numpy()
+
+        # Validate shape: expecting 4D (L, B, T, V) or 3D (B=1, T, V) after removing batch
+        if layer_output.ndim == 4:
+            # Shape good for typical multi-batch, multi-layer outputs, proceed
+            pass
+        elif layer_output.ndim == 3 and layer_output.shape[0] == 1:
+            layer_output = layer_output[0]  # remove batch dim
+        else:
+            print(f"Warning: Skipping layer '{name}' due to unexpected shape {layer_output.shape}")
+            continue  # skip this layer
+
+        logits_by_layer.append(layer_output)
+        valid_layer_names.append(name)
+
+    if len(logits_by_layer) == 0:
+        raise RuntimeError("No valid logits found for any layers!")
+
+    layer_logits = np.stack(logits_by_layer, axis=0)  # (num_layers, seq_len, vocab_size)
+
+    return layer_logits, valid_layer_names
 
 
 def postprocess_logits_topk(
@@ -487,7 +544,7 @@ def compute_comparison_metric(
         raise ValueError(f"Unknown metric type: {metric_type}")
 
 
-def get_metric_matrix(
+"""def get_metric_matrix(
     metric_type:str,
     all_layer_probs_1:np.ndarray,  
     all_layer_probs_2:np.ndarray,  
@@ -497,9 +554,9 @@ def get_metric_matrix(
     agg_mode:str='none'  # "layer", "position", or "none"
 ) -> np.ndarray:
     """
-    Compute metric matrix with shape [L, T].
-    agg_mode defines how to aggregate over batch/layer/position before final shape.
-    """
+    #Compute metric matrix with shape [L, T].
+    #agg_mode defines how to aggregate over batch/layer/position before final shape.
+"""
 
     L, B, T = all_layer_probs_1.shape[:3]
 
@@ -525,10 +582,10 @@ def get_metric_matrix(
             for t in range(T):
                 unique_counts[b, t] = len(np.unique(all_layer_preds_2[:, b, t]))
         unique_counts /= L
-        metric_matrix = np.broadcast_to(unique_counts[None, ...], (L, B, T)).copy()
+        metric_matrix = np.broadcast_to(unique_counts[None, ...], (L, B, T)).copy()"""
 
-    # Aggregate according to mode
-    """if agg_mode == "none":
+    # Aggregate according to mode - prev
+"""if agg_mode == "none":
         # Average over batch → [L, T]
         return metric_matrix.mean(axis=1)
 
@@ -544,7 +601,7 @@ def get_metric_matrix(
 
     else:
         raise ValueError(f"Invalid agg_mode: {agg_mode}")"""
-    if agg_mode == 'none':
+"""if agg_mode == 'none':
         # average over batch only → shape [L, T]
         return metric_matrix.mean(axis=1)
 
@@ -557,6 +614,81 @@ def get_metric_matrix(
         # average over batch and layers → shape [T]
         avg = metric_matrix.mean(axis=(0, 1))
         return np.tile(avg[None, :], (L, 1))
+
+    else:
+        raise ValueError(f"Invalid agg_mode: {agg_mode}")"""
+def get_metric_matrix(
+    metric_type: str,
+    all_layer_probs_1: np.ndarray,  # shape: [L, B, T, V]
+    all_layer_probs_2: np.ndarray,  # shape: [L, B, T, V]
+    all_layer_preds_1: np.ndarray,  # shape: [L, B, T]
+    all_layer_preds_2: np.ndarray,  # shape: [L, B, T]
+    topk: int = None,
+    agg_mode: str = 'none'  # One of: "none", "layer", "position"
+) -> np.ndarray:
+    """
+    Computes a layer-by-token metric matrix for comparing the outputs of two models 
+    (e.g., FP32 vs. quantized) across all layers. Metrics can include KL, JS, cosine, 
+    agreement, etc.
+
+    Args:
+        metric_type: Type of comparison metric (e.g., 'kl', 'js', 'cosine', etc.).
+        all_layer_probs_1: Probabilities from model 1. Shape [L, B, T, V].
+        all_layer_probs_2: Probabilities from model 2. Shape [L, B, T, V].
+        all_layer_preds_1: Top-1 predictions from model 1. Shape [L, B, T].
+        all_layer_preds_2: Top-1 predictions from model 2. Shape [L, B, T].
+        topk: Optional top-k to use for metrics requiring it (e.g., JS, Jaccard).
+        agg_mode: Aggregation mode for reducing over batch/layer/position.
+                  - "none": No aggregation except over batch → shape [L, T]
+                  - "layer": Aggregates across batch and tokens → shape [L, T] with row coloring
+                  - "position": Aggregates across batch and layers → shape [L, T] with column coloring
+
+    Returns:
+        A 2D NumPy array of shape [L, T], where each row corresponds to a layer 
+        and each column to a token position.
+    """
+
+    L, B, T = all_layer_probs_1.shape[:3]
+
+    # Compute per-layer metric values → each is [B, T]
+    vals = []
+    for l in range(L):
+        v = compute_comparison_metric(
+            metric_type,
+            all_layer_probs_1[l],
+            all_layer_probs_2[l],
+            all_layer_preds_1[l],
+            all_layer_preds_2[l],
+            topk
+        )
+        vals.append(v)
+
+    metric_matrix = np.stack(vals, axis=0)  # shape: [L, B, T]
+
+    # Special handling for 'variety' metric — not layer-wise, requires all layers
+    if metric_type == 'variety':
+        # For each [B, T], count how many unique predictions occurred across layers
+        unique_counts = np.zeros((B, T), dtype=np.float32)
+        for b in range(B):
+            for t in range(T):
+                unique_counts[b, t] = len(np.unique(all_layer_preds_2[:, b, t]))
+        unique_counts /= L
+        metric_matrix = np.broadcast_to(unique_counts[None, ...], (L, B, T)).copy()
+
+    # Aggregate the metric matrix based on the desired mode
+    if agg_mode == 'none':
+        # Average over batch dimension → shape [L, T]
+        return metric_matrix.mean(axis=1)
+
+    elif agg_mode == 'layer':
+        # Average over batch and token dimensions → scalar per layer → broadcast to shape [L, T]
+        avg = metric_matrix.mean(axis=(1, 2))  # shape [L]
+        return np.tile(avg[:, None], (1, T))   # shape [L, T] with uniform rows
+
+    elif agg_mode == 'position':
+        # Average over batch and layer dimensions → scalar per token → broadcast to shape [L, T]
+        avg = metric_matrix.mean(axis=(0, 1))  # shape [T]
+        return np.tile(avg[None, :], (L, 1))   # shape [L, T] with uniform columns
 
     else:
         raise ValueError(f"Invalid agg_mode: {agg_mode}")

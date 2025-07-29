@@ -105,23 +105,22 @@ def save_metrics_to_json(metrics_list:List[Dict], save_path:str) -> None:
         json.dump(serializable_metrics, f, indent=2)
 
 
-# cache so not re-load on every callback
 @lru_cache(maxsize=2)
 def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
-    tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(tok_id, trust_remote_code=True)
 
     if quant_config:
         if '4' in quant_config:
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
-                bnb_4bit_quant_type='nf4',       # or 'fp4'
-                #bnb_4bit_compute_dtype='float16'
+                bnb_4bit_use_double_quant=(quant_config == 'ptsq4bit'),
+                bnb_4bit_quant_type='nf4',
+                bnb_4bit_compute_dtype=torch.float16 
             )
         elif '8' in quant_config:
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
-                #bnb_4bit_compute_dtype='float16'
+                bnb_4bit_compute_dtype=torch.float16 
             )
         
         model = AutoModelForCausalLM.from_pretrained(
@@ -147,18 +146,32 @@ def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None) -> Tu
     return model, tok
 
 
+
 # ---------------------------
 # Safecasting
 # ---------------------------
+"""def safe_cast_logits(tensor:torch.Tensor) -> torch.Tensor:
+    if tensor.dtype in [torch.float16, torch.bfloat16, torch.int8, torch.uint8]:
+        tensor = tensor.to(torch.float32)
+    return torch.nan_to_num(tensor, nan=-1e9, posinf=1e9, neginf=-1e9)"""
 def safe_cast_logits(tensor:torch.Tensor) -> torch.Tensor:
     if tensor.dtype in [torch.float16, torch.bfloat16, torch.int8, torch.uint8]:
         tensor = tensor.to(torch.float32)
-    return torch.nan_to_num(tensor, nan=-1e9, posinf=1e9, neginf=-1e9)
 
+    tensor = torch.nan_to_num(tensor, nan=-1e9, posinf=1e9, neginf=-1e9)
+
+    # Clamp extreme values just in case
+    tensor = torch.clamp(tensor, min=-1e5, max=1e5)
+    return tensor
+
+
+"""def numpy_safe_cast(x:Any) -> Any:
+    x = x.astype(np.float32)
+    return np.nan_to_num(x, nan=-1e9, posinf=1e9, neginf=-1e9)"""
 def numpy_safe_cast(x:Any) -> Any:
     x = x.astype(np.float32)
-    return np.nan_to_num(x, nan=-1e9, posinf=1e9, neginf=-1e9)
-
+    x = np.nan_to_num(x, nan=-1e9, posinf=1e9, neginf=-1e9)
+    return np.clip(x, -1e5, 1e5)
 
 
 # ---------------------------
@@ -247,7 +260,12 @@ def text_to_input_ids(
     )['input_ids']
 
     if model is not None:
-        device = next(model.parameters()).device
+        device = getattr(model, 'device', None)
+        if device is None:
+            try:
+                device = next(model.parameters()).device
+            except:
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         tokens = tokens.to(device)
 
     return tokens  # shape: [batch_size, seq_len]
@@ -257,7 +275,7 @@ def text_to_input_ids(
 # ---------------------------
 # Collect & preprocess logits
 # ---------------------------
-def collect_logits(model:Any, input_ids:Any, layer_names:Any, decoder_layer_names:Optional[Any|None]) -> Tuple:
+"""def collect_logits(model:Any, input_ids:Any, layer_names:Any, decoder_layer_names:Optional[Any|None]) -> Tuple:
     model._last_resid = None
     
     # Handle single vs batch input
@@ -281,7 +299,46 @@ def collect_logits(model:Any, input_ids:Any, layer_names:Any, decoder_layer_name
         print(f"[Error] Missing layer logits for {e}")
         layer_logits = np.zeros((batch_size, len(layer_names), model.config.hidden_size))
 
-    return layer_logits, layer_names
+    return layer_logits, layer_names"""
+def collect_logits(model:Any, input_ids:Any, layer_names:Any, decoder_layer_names:Any|None=None) -> Tuple[Any,Any]:
+    model._last_resid = None
+
+    with torch.no_grad():
+        _ = model(input_ids, output_hidden_states=True)
+
+    model._last_resid = None
+
+    logits_by_layer = []
+    valid_layer_names = []
+    for name in layer_names:
+        layer_output = model._layer_logits.get(name)
+        if layer_output is None:
+            raise ValueError(f"Missing logits for layer: {name}")
+
+        # Convert to numpy if tensor
+        if isinstance(layer_output, torch.Tensor):
+            layer_output = layer_output.detach().cpu().numpy()
+
+        # Validate shape: expecting 4D (L, B, T, V) or 3D (B=1, T, V) after removing batch
+        if layer_output.ndim == 4:
+            # Shape good for typical multi-batch, multi-layer outputs, proceed
+            pass
+        elif layer_output.ndim == 3 and layer_output.shape[0] == 1:
+            layer_output = layer_output[0]  # remove batch dim
+        else:
+            print(f"Warning: Skipping layer '{name}' due to unexpected shape {layer_output.shape}")
+            continue  # skip this layer
+
+        logits_by_layer.append(layer_output)
+        valid_layer_names.append(name)
+
+    if len(logits_by_layer) == 0:
+        raise RuntimeError("No valid logits found for any layers!")
+
+    layer_logits = np.stack(logits_by_layer, axis=0)  # (num_layers, seq_len, vocab_size)
+
+    return layer_logits, valid_layer_names
+
 
 
 def collect_batch_logits(model, input_ids, layer_names, outputs) -> Tuple:
@@ -912,7 +969,10 @@ def plot_topk_logit_lens(
 
     # ---- load model, tokenizer
     model, tokenizer = _load_model_tokenizer(model_path, tokenizer_path, model_precision)
-    if model_precision:
+
+    # Only call .to() if it's not a quantized model
+    is_quantized = hasattr(model, 'is_loaded_in_4bit') or hasattr(model, 'is_loaded_in_8bit')
+    if model_precision and not is_quantized:
         model = model.to(model_precision)
 
     # ---- suppress errors, set deterministic backend if needed
