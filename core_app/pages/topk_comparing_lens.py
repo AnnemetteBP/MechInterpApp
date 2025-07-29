@@ -201,6 +201,15 @@ layout = dbc.Container([
                 className="form-select"
             ),
         ], width=4),
+        dbc.Col([
+            html.Label("Safe Cast Logits"),
+            dcc.Checklist(
+                id="safe-cast-0",
+                options=[{"label": "Safe Cast Logits", "value": False}],
+                value=[],
+                inputStyle={"margin-right":"8px"}
+            ),
+        ], width=4),
     ], className="mb-3"),
 
     # Graph row
@@ -234,18 +243,18 @@ layout = dbc.Container([
       Input("model-precision-0", "value"),
       Input("model-precision-00","value"),
       Input("deterministic",     "value"),
-      Input("agg-mode-0",        "value"),  
+      Input("agg-mode-0",        "value"),
+      Input("safe-cast-0",       "value"),   
     ]
 )
 def update_logit_lens(
-    n,
-    model_id_1, model_id_2,
-    tokenizer_id_1, tokenizer_id_2,
-    text,
-    start_ix, end_ix, top_k, metric,
-    block_step, token_font_size, label_font_size,
-    flags, decoder_layers, model_precision_1, model_precision_2,
-    deterministic, agg_mode  
+    n, model_id_1, model_id_2,
+    tokenizer_id_1, tokenizer_id_2, text,
+    start_ix, end_ix, top_k,
+    metric, block_step, token_font_size,
+    label_font_size, flags, decoder_layers,
+    model_precision_1, model_precision_2, deterministic,
+    agg_mode, safe_cast  
 ):
     if not n or not text:
         return go.Figure()
@@ -262,6 +271,7 @@ def update_logit_lens(
     pad_to_max_length    = "pad_to_max_length" in flags
     topk_mean            = "topk_mean" in flags
     use_deterministic    = True if deterministic else False
+    safe_cast            = True if safe_cast else False
 
     try:
         return topk_comparing_plotter.plot_topk_comparing_lens(
@@ -289,7 +299,8 @@ def update_logit_lens(
             pad_to_max_length    = pad_to_max_length,
             model_precision_1    = model_precision_1,
             model_precision_2    = model_precision_2,
-            use_deterministic_backend = use_deterministic
+            use_deterministic_backend = use_deterministic,
+            safe_cast            = safe_cast
         ) or go.Figure()
     except Exception as e:
         return go.Figure().add_annotation(

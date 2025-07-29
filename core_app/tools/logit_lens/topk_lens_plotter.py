@@ -314,13 +314,11 @@ def postprocess_logits_topk(
         normalize_probs=False,
         top_n:int=5,
         return_scores:bool=True,
-        to_float:Optional[None|Any]=None
+        safe_cast:bool=False
 ) -> Tuple[Any, Any, Any]:
 
-    assert to_float == None or to_float == np.float32
-
-    if to_float is not None:
-        layer_logits = layer_logits.astype(to_float)
+    if safe_cast:
+        layer_logits = layer_logits.astype(np.float32)
 
     # Replace NaNs and infs with appropriate values
     layer_logits = np.nan_to_num(layer_logits, nan=-1e9, posinf=1e9, neginf=-1e9)
@@ -908,11 +906,9 @@ def plot_topk_logit_lens(
     model_precision:Optional[str|None]=None,
     use_deterministic_backend:bool=False,
     json_log_path:str|None=None,
-    safe_cast:Optional[Any|None]=None # np.float32 
+    safe_cast:bool=False # true -> np.float32 
 ) -> go.Figure:
     """ Plot topk Logit Lens """
-
-    assert safe_cast == None or safe_cast == np.float32
 
     # ---- load model, tokenizer
     model, tokenizer = _load_model_tokenizer(model_path, tokenizer_path, model_precision)
@@ -954,10 +950,10 @@ def plot_topk_logit_lens(
         # ---- collect, preprocess logits
         layer_logits, layer_names = collect_logits(model, input_ids, layer_names, decoder_layer_names)
 
-        if safe_cast is not None:
+        if safe_cast:
             layer_logits = safe_cast_logits(torch.tensor(layer_logits)).numpy()
 
-        layer_preds, layer_probs, _ = postprocess_logits_topk(layer_logits, top_n=topk, to_float=safe_cast)
+        layer_preds, layer_probs, _ = postprocess_logits_topk(layer_logits, top_n=topk, safe_cast=safe_cast)
 
         # ---- clean probs
         layer_probs = np.nan_to_num(layer_probs, nan=1e-10, posinf=1.0, neginf=0.0)

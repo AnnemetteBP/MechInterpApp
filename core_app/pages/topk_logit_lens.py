@@ -85,15 +85,15 @@ layout = dbc.Container([
         dbc.Col([
             html.Label("block_step"), 
             dcc.Input(id="block-step", type="number", value=1, className="form-control"),
-        ], width=3),
+        ], width=2),
         dbc.Col([
             html.Label("token_font_size"), 
             dcc.Input(id="token-font-size", type="number", value=12, className="form-control"),
-        ], width=3),
+        ], width=2),
         dbc.Col([
             html.Label("label_font_size"), 
             dcc.Input(id="label-font-size", type="number", value=20, className="form-control"),
-        ], width=3),
+        ], width=2),
         dbc.Col([
             html.Label("use_deterministic_backend"),
             dcc.Checklist(
@@ -102,7 +102,16 @@ layout = dbc.Container([
                 value=[],
                 inputStyle={"margin-right":"8px"}
             ),
-        ], width=3),
+        ], width=2),
+        dbc.Col([
+            html.Label("safe_cast"),
+            dcc.Checklist(
+                id="safe-cast",
+                options=[{"label": "Safe Cast Logits", "value": False}],
+                value=[],
+                inputStyle={"margin-right":"8px"}
+            ),
+        ], width=2),
     ], className="mb-3"),
 
     # Flags checklist row
@@ -184,13 +193,15 @@ layout = dbc.Container([
       Input("decoder-layers",  "value"),
       Input("model-precision", "value"),
       Input("deterministic",   "value"),
+      Input("safe-cast",        "value"),
     ]
 )
 def update_logit_lens(
     n, model_id, tok_id, text,
-    start_ix, end_ix, top_k, metric,
-    block_step, token_font_size, label_font_size,
-    flags, decoder_layers, model_precision, deterministic
+    start_ix, end_ix, top_k,
+    metric, block_step, token_font_size,
+    label_font_size, flags, decoder_layers,
+    model_precision, deterministic, safe_cast
 ):
     if not n or not text:
         return go.Figure()
@@ -207,6 +218,7 @@ def update_logit_lens(
     pad_to_max_length    = "pad_to_max_length" in flags
     topk_mean            = "topk_mean" in flags
     use_deterministic    = True if deterministic else False
+    safe_cast            = True if safe_cast else False
 
     try:
         return topk_lens_plotter.plot_topk_logit_lens(
@@ -235,7 +247,8 @@ def update_logit_lens(
             verbose              = verbose,
             pad_to_max_length    = pad_to_max_length,
             model_precision      = model_precision,
-            use_deterministic_backend = use_deterministic
+            use_deterministic_backend = use_deterministic,
+            safe_cast            = safe_cast 
         ) or go.Figure()
     except Exception as e:
         return go.Figure().add_annotation(

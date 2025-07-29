@@ -164,7 +164,7 @@ def postprocess_logits_topk(
     normalize_probs:bool=False,
     top_n:int=5,
     return_scores:bool=True,
-    to_float:Optional[None|Any]=None
+    safe_cast:bool=False
 ):
     """
     Inputs:
@@ -174,13 +174,12 @@ def postprocess_logits_topk(
         layer_probs: float array [L, T, V] or [L, B, T, V]
         top_n_scores: [L, T] or [L, B, T] (mean of top_n probs)
     """
-    assert to_float == None or to_float == np.float32
 
     if isinstance(layer_logits, torch.Tensor):
         layer_logits = layer_logits.cpu().numpy()
 
-    if to_float is not None:
-        layer_logits = layer_logits.astype(to_float)
+    if safe_cast:
+        layer_logits = layer_logits.astype(np.float32)
         
     layer_logits = np.nan_to_num(layer_logits, nan=-1e9, posinf=1e9, neginf=-1e9)
 
@@ -788,11 +787,9 @@ def plot_topk_comparing_lens(
     model_precision_1:Optional[str]=None,
     model_precision_2:Optional[str]=None,
     use_deterministic_backend:bool=False,
-    safe_cast:Optional[Any|None]=None # np.float32 
+    safe_cast:bool=False # np.float32 
 ) -> go.Figure:
     """ Plots the Comparing (Logit) Lens for topk """
-
-    assert safe_cast == None or safe_cast == np.float32
 
     # ---- topk, topk mean
     topk = 1 if topk < 1 else topk
@@ -845,7 +842,7 @@ def plot_topk_comparing_lens(
     layer_logits_1, _ = collect_logits(model_1, input_ids_1, layer_names_1)  # [L, T, V]
     layer_logits_2, _ = collect_logits(model_2, input_ids_2, layer_names_2)
 
-    if safe_cast is not None:
+    if safe_cast:
         layer_logits_1 = safe_cast_logits(torch.tensor(layer_logits_1)).cpu().numpy()
         layer_logits_2 = safe_cast_logits(torch.tensor(layer_logits_2)).cpu().numpy()
 
@@ -854,11 +851,11 @@ def plot_topk_comparing_lens(
 
     # ---- postprocess
     if topk_mean:
-        layer_preds_1, layer_probs_1, _ = postprocess_logits_topk(layer_logits_1, top_n=topk, return_scores=True, to_float=safe_cast)
-        layer_preds_2, layer_probs_2, _ = postprocess_logits_topk(layer_logits_2, top_n=topk, return_scores=True, to_float=safe_cast)
+        layer_preds_1, layer_probs_1, _ = postprocess_logits_topk(layer_logits_1, top_n=topk, return_scores=True, safe_cast=safe_cast)
+        layer_preds_2, layer_probs_2, _ = postprocess_logits_topk(layer_logits_2, top_n=topk, return_scores=True, safe_cast=safe_cast)
     else:
-        layer_preds_1, layer_probs_1 = postprocess_logits_topk(layer_logits_1, top_n=1, return_scores=False, to_float=safe_cast)
-        layer_preds_2, layer_probs_2 = postprocess_logits_topk(layer_logits_2, top_n=1, return_scores=False, to_float=safe_cast)
+        layer_preds_1, layer_probs_1 = postprocess_logits_topk(layer_logits_1, top_n=1, return_scores=False, safe_cast=safe_cast)
+        layer_preds_2, layer_probs_2 = postprocess_logits_topk(layer_logits_2, top_n=1, return_scores=False, safe_cast=safe_cast)
 
     # ---- fix NaNs
     layer_probs_1 = np.nan_to_num(layer_probs_1, nan=1e-10, posinf=1.0, neginf=0.0)
