@@ -5,6 +5,11 @@ import torch
 from core_app.app import app
 from ..tools.logit_lens import topk_lens_plotter
 
+
+MODELS = ['DHL3B/DHL3B-model', 'LI8B/LI-model', 'HF1BitLLM/HF1BitLLM-model']
+TOKS = ['DHL3B/DHL3B-tokenizer', 'LI8B/LI-tokenizer', 'HF1BitLLM/HF1BitLLM-tokenizer']
+PROMPT = "Intelligence cannot be present without understanding. No computer has any awareness of what it does."
+
 layout = dbc.Container([
 
     html.H2("🔍 TopK-N Logit Lens", className="mb-4"),
@@ -13,11 +18,11 @@ layout = dbc.Container([
     dbc.Row([
         dbc.Col([
             html.Label("Model ID/Path"),
-            dcc.Input(id="model-id", value="DHL3B/DHL3B-model", className="form-control"),
+            dcc.Input(id="model-id", value=MODELS[2], className="form-control"),
         ], width=6),
         dbc.Col([
             html.Label("Tokenizer ID/Path"),
-            dcc.Input(id="tokenizer-id", value="DHL3B/DHL3B-tokenizer", className="form-control"),
+            dcc.Input(id="tokenizer-id", value=TOKS[2], className="form-control"),
         ], width=6),
     ], className="mb-3"),
 
@@ -28,7 +33,7 @@ layout = dbc.Container([
             dcc.Textarea(
                 id="input-text",
                 placeholder="Your prompt here: e.g., What is y if y=2*2-4+(3*2)",
-                value="the cat cat is on the mat mat",
+                value=PROMPT,
                 className="form-control",
                 style={"height": "80px"}
             ),
@@ -43,7 +48,7 @@ layout = dbc.Container([
         ], width=4),
         dbc.Col([
             html.Label("End Index"),
-            dcc.Input(id="end-ix", type="number", value=10, className="form-control"),
+            dcc.Input(id="end-ix", type="number", value=18, className="form-control"),
         ], width=4),
         dbc.Col([
             html.Label("Top-K"),
@@ -88,11 +93,11 @@ layout = dbc.Container([
         ], width=2),
         dbc.Col([
             html.Label("token_font_size"), 
-            dcc.Input(id="token-font-size", type="number", value=12, className="form-control"),
+            dcc.Input(id="token-font-size", type="number", value=14, className="form-control"),
         ], width=2),
         dbc.Col([
             html.Label("label_font_size"), 
-            dcc.Input(id="label-font-size", type="number", value=20, className="form-control"),
+            dcc.Input(id="label-font-size", type="number", value=16, className="form-control"),
         ], width=2),
         dbc.Col([
             html.Label("use_deterministic_backend"),

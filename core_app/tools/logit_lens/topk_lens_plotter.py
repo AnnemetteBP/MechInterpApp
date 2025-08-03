@@ -1,5 +1,6 @@
 from functools import partial
 from typing import Tuple, List, Dict, Any, Union, Optional
+import os
 import json
 from pathlib import Path
 import torch
@@ -85,6 +86,21 @@ def clear_cuda_cache() -> None:
     """Clear GPU cache to avoid memory errors during operations"""
     torch.cuda.empty_cache()
 
+def load_saved_logit_lens(path):
+    data = np.load(path, allow_pickle=True)
+    return {
+        "layer_logits": data["layer_logits"],
+        "layer_probs": data["layer_probs"],
+        "layer_preds": data["layer_preds"],
+        "topk_indices": data["topk_indices"],
+        "topk_scores": data["topk_scores"],
+        "value_matrix": data["value_matrix"],
+        "input_ids": data["input_ids"],
+        "layer_names": data["layer_names"].tolist(),
+        "metric_type": str(data["metric_type"]),
+        "model_path": str(data["model_path"]),
+        "topk": int(data["topk"])
+    }
 
 def save_metrics_to_json(metrics_list:List[Dict], save_path:str) -> None:
     def convert_ndarray(o):
@@ -922,8 +938,11 @@ def _topk_logit_lens_fig(
             title='Layer',
             autorange='reversed',
         ),
-        width=max(1200, 100 * num_tokens),
-        height=max(600, 35 * len(layer_names)),
+        autosize=True,
+        width=None,
+        height=None,
+        #width=max(1200, 100 * num_tokens),
+        #height=max(600, 35 * len(layer_names)),
         margin=dict(l=20, r=10, t=40, b=10),
     )
 
@@ -951,8 +970,8 @@ def plot_topk_logit_lens(
     token_variety:bool=False,
     ranks:bool=False,
     block_step:int=1,
-    token_font_size:int=12,
-    label_font_size:int=20,
+    token_font_size:int=14,
+    label_font_size:int=16,
     include_input:bool=True,
     force_include_output:bool=True,
     include_subblocks:bool=False,
@@ -963,8 +982,10 @@ def plot_topk_logit_lens(
     model_precision:Optional[str|None]=None,
     use_deterministic_backend:bool=False,
     json_log_path:str|None=None,
-    safe_cast:bool=False # true -> np.float32 
-) -> go.Figure:
+    safe_cast:bool=False, # true -> np.float32
+    save_results:bool=False,
+    model_name:Optional[str|None]=None
+) -> go.Figure|None:
     """ Plot topk Logit Lens """
 
     # ---- load model, tokenizer
@@ -1170,33 +1191,66 @@ def plot_topk_logit_lens(
             metric_type = 'logits'
             title = f"Logits ({'mean topk' if topk_mean else 'top-1'})"
 
-        # ---- plot logit lens
-        fig = _topk_logit_lens_fig(
-            layer_logits=layer_logits,
-            layer_preds=layer_preds,
-            layer_probs=layer_probs,
-            topk_scores=topk_scores,
-            topk_indices=topk_indices,
-            tokenizer=tokenizer,
-            input_ids=input_ids,
-            start_ix=start_ix,
-            layer_names=layer_names,
-            top_k=topk,
-            topk_mean=topk_mean,
-            normalize=True,
-            metric_type=metric_type,
-            map_color=map_color,
-            value_matrix=value_matrix,
-            rank_matrix_raw=rank_matrix_raw,
-            pred_ranks=pred_ranks,  
-            title=title,
-            block_step=block_step,
-            token_font_size=token_font_size,
-            label_font_size=label_font_size
-        )
+        if save_results:
+            DIR = "logit_lens_logs"
+            os.makedirs(DIR, exist_ok=True)
 
-        clear_cuda_cache()
-        return fig
+            output_path = os.path.join(DIR, f"{model_name}_{metric_type}.npz")
+            np.savez_compressed(output_path,
+                layer_logits=layer_logits.astype(np.float32),
+                layer_probs=layer_probs.astype(np.float32),
+                layer_preds=layer_preds.astype(np.int32),
+                topk_indices=topk_indices.astype(np.int32),
+                topk_scores=topk_scores.astype(np.float32),
+                value_matrix=value_matrix.astype(np.float32),
+                input_ids=input_ids.cpu().numpy(),
+                layer_names=np.array(layer_names),
+                metric_type=metric_type,
+                model_path=model_path,
+                topk=np.int32(topk)
+            )
+
+            print(f"Logit Lens result successfully saved to: {output_path}")
+
+        else:
+            # ---- plot logit lens
+            fig = _topk_logit_lens_fig(
+                layer_logits=layer_logits,
+                layer_preds=layer_preds,
+                layer_probs=layer_probs,
+                topk_scores=topk_scores,
+                topk_indices=topk_indices,
+                tokenizer=tokenizer,
+                input_ids=input_ids,
+                start_ix=start_ix,
+                layer_names=layer_names,
+                top_k=topk,
+                topk_mean=topk_mean,
+                normalize=True,
+                metric_type=metric_type,
+                map_color=map_color,
+                value_matrix=value_matrix,
+                rank_matrix_raw=rank_matrix_raw,
+                pred_ranks=pred_ranks,  
+                title=title,
+                block_step=block_step,
+                token_font_size=token_font_size,
+                label_font_size=label_font_size
+            )
+
+            if model_name is not None:
+                DIR = 'logit_lens_outputs'
+                os.makedirs(DIR, exist_ok=True)
+
+                fig.write_html(
+                    f"{DIR}/{model_name}_logit_lens_{metric_type}.html",
+                    full_html=True,
+                    include_plotlyjs='cdn',
+                    config={'responsive': True}
+                )
+                
+            clear_cuda_cache()
+            return fig
     
     # ---- if batch analysis, logging
     else:

@@ -4,3 +4,6 @@ DHL3B/
 HF1BitLLM/
 LI8B/
 assets/
+logit_lens_logs/
+logit_lens_outputs/
+comparing_lens_outputs/

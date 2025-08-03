@@ -1,5 +1,6 @@
 from functools import partial
 from typing import Tuple, List, Dict, Any, Union, Optional
+import os
 import json
 from pathlib import Path
 import torch
@@ -404,14 +405,14 @@ METRIC_REGISTRY = {
     "js":            {"type": "prob",  "topk": True,  "title": "Jensen–Shannon divergence", "cmap": "Blues"},
     "nwd":           {"type": "prob",  "topk": True,  "title": "Normalized Wasserstein distance (top-k)", "cmap": "Blues"},
     "full_nwd":      {"type": "prob",  "topk": False, "title": "Normalized Wasserstein distance (full)", "cmap": "Blues"},
-    "kl":            {"type": "prob",  "topk": False, "title": "KL Divergence (P||Q)", "cmap": "Reds"},
-    "cosine":        {"type": "prob",  "topk": False, "title": "Cosine similarity", "cmap": "Viridis"},
+    "kl":            {"type": "prob",  "topk": False, "title": "KL Divergence (P||Q)", "cmap": "Cividis"},
+    "cosine":        {"type": "prob",  "topk": False, "title": "Cosine similarity", "cmap": "reds"},
     "entropy_diff":  {"alias": "entropy_gap", "type": "prob", "topk": False, "title": "Entropy difference (P - Q)", "cmap": "RdBu"},
 
-    "match_ratio":   {"alias": "agreement", "type": "top1", "topk": False, "title": "Top-1 agreement", "cmap": "Cividis"},
+    "match_ratio":   {"alias": "agreement", "type": "top1", "topk": False, "title": "Top-1 agreement", "cmap": "picnic"},
     "rank_delta":    {"type": "top1", "topk": False, "title": "Top-1 rank delta", "cmap": "Cividis"},
-    "jaccard":       {"type": "topk", "topk": True,  "title": "Top-k Jaccard", "cmap": "Cividis"},
-    "variety":       {"type": "top1", "topk": False, "title": "Layer token variety", "cmap": "Cividis"},
+    "jaccard":       {"type": "topk", "topk": True,  "title": "Top-k Jaccard", "cmap": "Viridis"},
+    "variety":       {"type": "top1", "topk": False, "title": "Layer token variety", "cmap": "purples"},
 }
 
 
@@ -881,10 +882,13 @@ def _topk_comparing_lens_fig(
             title='Layer',
             autorange='reversed',
         ),
-        width=max(1200, 100 * T),
-        height=max(600, 35 * len(layer_names)),
+        autosize=True,
+        width=None,
+        height=None,
+        #width=max(1200, 100 * T),
+        #height=max(600, 35 * len(layer_names)),
         margin=dict(l=20, r=10, t=40, b=10),
-        title=title
+        #title=title
     )
 
     return fig
@@ -907,8 +911,8 @@ def plot_topk_comparing_lens(
     metric_type:Optional[str]=None,
     agg_mode:str='none',  # "none", "layer", "position"
     block_step:int=1,
-    token_font_size:int=12,
-    label_font_size:int=20,
+    token_font_size:int=14,
+    label_font_size:int=16,
     include_input:bool=True,
     force_include_output:bool=True,
     include_subblocks:bool=False,
@@ -919,7 +923,8 @@ def plot_topk_comparing_lens(
     model_precision_1:Optional[str]=None,
     model_precision_2:Optional[str]=None,
     use_deterministic_backend:bool=False,
-    safe_cast:bool=False # np.float32 
+    safe_cast:bool=False, # np.float32
+    fig_name:Optional[str|None]=None # 'instruct-hf1bitllm' 
 ) -> go.Figure:
     """ Plots the Comparing (Logit) Lens for topk """
 
@@ -1043,5 +1048,16 @@ def plot_topk_comparing_lens(
         agg_mode=agg_mode, 
     )
 
+    if fig_name is not None:
+        DIR = 'comparing_lens_outputs'
+        os.makedirs(DIR, exist_ok=True)
+
+        fig.write_html(
+            f"{DIR}/{fig_name}_comparing_lens_{metric_type}.html",
+            full_html=True,
+            include_plotlyjs='cdn',
+            config={'responsive': True}
+        )
+    
     clear_cuda_cache()
     return fig
