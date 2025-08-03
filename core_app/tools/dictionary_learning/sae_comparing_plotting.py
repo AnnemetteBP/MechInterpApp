@@ -22,6 +22,7 @@ def clear_cuda_cache():
     """Clear GPU cache to avoid memory errors during operations"""
     torch.cuda.empty_cache()
 
+
 def clean_token(token: str) -> str:
     if token.startswith("Ġ"):
         return " " + token[1:]
@@ -29,6 +30,7 @@ def clean_token(token: str) -> str:
         return "\\n" + token[1:]
     else:
         return token
+
 
 # cache so we don’t re-load on every callback
 @lru_cache(maxsize=2)
@@ -71,6 +73,7 @@ def load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
 
     return model, tok
 
+
 def _plot_comparing_heatmap(
     tokens:List[str],
     feature_token_matrix:torch.Tensor,
@@ -90,9 +93,14 @@ def _plot_comparing_heatmap(
     text = [["" for _ in range(tokens_per_row)] for _ in range(num_rows)]
     hovertext = [["" for _ in range(tokens_per_row)] for _ in range(num_rows)]
 
+    """if saliency is not None:
+        norm_saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-5)
+        norm_saliency = norm_saliency.numpy()"""
+    # Normalize and scale saliency to [0, 10]
     if saliency is not None:
         norm_saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-5)
-        norm_saliency = norm_saliency.numpy()
+        norm_saliency = norm_saliency.numpy() * 10
+        norm_saliency = np.clip(norm_saliency, 0, 10)
 
     for idx, token in enumerate(tokens):
         row = idx // tokens_per_row
@@ -136,7 +144,7 @@ def _plot_comparing_heatmap(
     fig = go.Figure(data=go.Heatmap(
         z=z,
         zmin=0.0,
-        zmax=1.0,
+        zmax=10.0,
         text=text,
         hoverinfo="text",
         hovertext=hovertext,
@@ -150,8 +158,11 @@ def _plot_comparing_heatmap(
     fig.update_layout(
         title="Token-Level FP vs Quant Comparison",
         title_font=dict(size=label_font_size, family="DejaVu Sans"),
-        width=max(600, tokens_per_row * 50),
-        height=num_rows * 50 + 100,
+        #width=max(600, tokens_per_row * 50),
+        #height=num_rows * 50 + 100,
+        autosize=True,
+        width=None,
+        height=None,
         margin=dict(l=20, r=20, t=40, b=20),
         xaxis=dict(showticklabels=False),
         yaxis=dict(showticklabels=False, autorange='reversed'),
@@ -168,7 +179,7 @@ def _run_multi_model_sae(
         text:str,
         top_k:int=5,
         tokens_per_row:int=12,
-        target_layers:List[int]=[5,10,15],
+        target_layers:List[int]=[5,10,15,25,30],
         models_to_eval:bool=True,
         deterministic_sae:bool=True,
         token_font_size:int=20,
@@ -246,11 +257,12 @@ def plot_comparing_heatmap(
         inputs:Any,
         top_k:int=5,
         tokens_per_row:int=12,
-        target_layers:List[int]=[5,10,15],
+        target_layers:List[int]=[5,10,15,25,30],
         model_to_eval:bool=True,
         deterministic_sae:bool=True,
         token_font_size:int=20,
         label_font_size:int=20,
+        model_ids:Optional[str|None]=None # 'instruct-hf1bitllm',
 ):
 
 
@@ -266,6 +278,23 @@ def plot_comparing_heatmap(
         token_font_size=token_font_size,
         label_font_size=label_font_size,
     )
+
+    if model_ids is not None:
+        OUTPUT_DIR = "comparing_sae_outputs"
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+        for layer_name, fig in layer_figs:
+            # Clean the layer name to be safe for filenames
+            safe_layer_name = layer_name.replace(" ", "_").lower()
+
+            filename = os.path.join(OUTPUT_DIR, f"{model_ids}_sae_{safe_layer_name}.html")
+
+            fig.write_html(
+                file=filename,
+                full_html=True,
+                include_plotlyjs='cdn',
+                config={"responsive": True}
+            )
 
     clear_cuda_cache()
     return [

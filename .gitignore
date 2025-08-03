@@ -7,3 +7,5 @@ assets/
 logit_lens_logs/
 logit_lens_outputs/
 comparing_lens_outputs/
+sae_outputs/
+comparing_sae_outputs/

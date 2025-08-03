@@ -7,6 +7,9 @@ import torch
 from core_app.app import app
 from ..tools.dictionary_learning.sae_comparing_plotting import plot_comparing_heatmap, load_model_tokenizer
 
+MODELS = ['DHL3B/DHL3B-model', 'LI8B/LI-model', 'HF1BitLLM/HF1BitLLM-model']
+TOKS = ['DHL3B/DHL3B-tokenizer', 'LI8B/LI-tokenizer', 'HF1BitLLM/HF1BitLLM-tokenizer']
+PROMPT = "Intelligence cannot be present without understanding. No computer has any awareness of what it does."
 
 layout = dbc.Container([
     html.H2("🧠 SAE Heatmap Comparison", className="mb-4"),
@@ -14,14 +17,14 @@ layout = dbc.Container([
     dbc.Row([
         dbc.Col([
             html.Label("Input Text"),
-            dcc.Input(id="sh-text", className="form-control", value="The king led the troops into battle."),
+            dcc.Input(id="sh-text", className="form-control", value=PROMPT),
         ])
     ], className="mb-3"),
 
     dbc.Row([
         dbc.Col([
             html.Label("Target Layers (comma-separated)"),
-            dcc.Input(id="sh-layers", className="form-control", value="5,10,15"),
+            dcc.Input(id="sh-layers", className="form-control", value="5,10,15,25,30"),
         ], width=6),
         dbc.Col([
             html.Label("Top K Concepts"),
@@ -29,22 +32,22 @@ layout = dbc.Container([
         ], width=2),
         dbc.Col([
             html.Label("Tokens per Row"),
-            dcc.Input(id="sh-tpr", type="number", value=12, className="form-control"),
+            dcc.Input(id="sh-tpr", type="number", value=20, className="form-control"),
         ], width=2)
     ], className="mb-3"),
 
     dbc.Row([
         dbc.Col([
             html.Label("Model 1 Path"),
-            dcc.Input(id="sh-model-fp", value="DHL3B/DHL3B-model", className="form-control")
+            dcc.Input(id="sh-model-fp", value=MODELS[1], className="form-control")
         ]),
         dbc.Col([
             html.Label("Model 2 Path"),
-            dcc.Input(id="sh-model-q", value="DHL3B/DHL3B-model", className="form-control")
+            dcc.Input(id="sh-model-q", value=MODELS[2], className="form-control")
         ]),
         dbc.Col([
             html.Label("Tokenizer Path"),
-            dcc.Input(id="sh-tokenizer", value="DHL3B/DHL3B-tokenizer", className="form-control")
+            dcc.Input(id="sh-tokenizer", value=TOKS[1], className="form-control")
         ])
     ], className="mb-3"),
 
@@ -95,17 +98,17 @@ layout = dbc.Container([
         ], width=3),
         dbc.Col([
             html.Label("token_font_size"), 
-            dcc.Input(id="token-font-size", type="number", value=12, className="form-control"),
+            dcc.Input(id="token-font-size", type="number", value=18, className="form-control"),
         ], width=3),
         dbc.Col([
             html.Label("label_font_size"), 
-            dcc.Input(id="label-font-size", type="number", value=14, className="form-control"),
+            dcc.Input(id="label-font-size", type="number", value=20, className="form-control"),
         ], width=3),
         dbc.Col([
             html.Label("Deterministic Backend"),
             dcc.Checklist(
                 id="deterministic",
-                options=[{"label": "Deterministic SAE", "value": True}],
+                options=[{"label": "Deterministic SAE", "value": False}],
                 value=[],
                 inputStyle={"margin-right":"8px"}
             ),

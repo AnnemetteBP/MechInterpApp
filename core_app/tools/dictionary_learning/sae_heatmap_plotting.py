@@ -12,7 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from dash import dcc, html
 import numpy as np
 import plotly.graph_objects as go
-
+import plotly.io as pio
 from functools import lru_cache
 
 from .sae_class import SAE
@@ -23,6 +23,7 @@ def clear_cuda_cache():
     """Clear GPU cache to avoid memory errors during operations"""
     torch.cuda.empty_cache()
 
+
 def clean_token(token: str) -> str:
     if token.startswith("Ġ"):
         return " " + token[1:]
@@ -30,6 +31,49 @@ def clean_token(token: str) -> str:
         return "\\n" + token[1:]
     else:
         return token
+
+
+# cache so we don’t re-load on every callback
+@lru_cache(maxsize=2)
+def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
+    tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
+
+    if quant_config:
+        if '4' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
+                bnb_4bit_quant_type='nf4',       # or 'fp4'
+                #bnb_4bit_compute_dtype='float16'
+            )
+        elif '8' in quant_config:
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                #bnb_4bit_compute_dtype='float16'
+            )
+        
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            quantization_config=bnb_config,
+            device_map='auto',
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            return_dict=True,
+            output_hidden_states=True,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            trust_remote_code=True
+        )
+
+    return model, tok
+
 
 def _plot_token_heatmap(
     tokens:List[str],
@@ -39,6 +83,8 @@ def _plot_token_heatmap(
     tokens_per_row:int=12,
     token_font_size:int=12,
     label_font_size:int=20,
+    zmin=0,  # Fix color scale min
+    zmax=10,  # Fix color scale max
 ) -> go.Figure:
     
     num_tokens = len(tokens)
@@ -50,9 +96,14 @@ def _plot_token_heatmap(
     hovertext = [["" for _ in range(tokens_per_row)] for _ in range(num_rows)]
 
     # Normalize saliency
+    """if saliency is not None:
+        norm_saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-5)
+        norm_saliency = norm_saliency.numpy()"""
     if saliency is not None:
         norm_saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-5)
-        norm_saliency = norm_saliency.numpy()
+        norm_saliency = norm_saliency.numpy() * 10
+        norm_saliency = np.clip(norm_saliency, 0, 10)
+
 
     for idx, token in enumerate(tokens):
         row = idx // tokens_per_row
@@ -94,14 +145,19 @@ def _plot_token_heatmap(
         texttemplate="%{text}",
         #textfont={"size": 10, "color": "black", "family": "Times New Roman"},
         textfont={"size": token_font_size, "family": "DejaVu Sans"},
-        xgap=2, ygap=2
+        xgap=2, ygap=2,
+        zmin=0,  # Fix color scale min
+        zmax=10,  # Fix color scale max
     ))
 
     fig.update_layout(
         title=f"Top-k {top_k} Token Activation",
         title_font=dict(size=label_font_size, family="DejaVu Sans"),
-        width=max(600, tokens_per_row * 50),
-        height=num_rows * 50 + 100,
+        #width=max(600, tokens_per_row * 50),
+        #height=num_rows * 50 + 100,
+        autosize=True,
+        width=None,
+        height=None,
         margin=dict(l=20, r=20, t=40, b=20),
         xaxis=dict(showticklabels=False),
         #yaxis=dict(showticklabels=False),
@@ -173,48 +229,6 @@ def _run_multi_layer_sae(
     
     return layer_figs
 
-
-# cache so we don’t re-load on every callback
-@lru_cache(maxsize=2)
-def _load_model_tokenizer(model_id:str, tok_id:str, quant_config:str|None):
-    tok   = AutoTokenizer .from_pretrained(tok_id, trust_remote_code=True)
-
-    if quant_config:
-        if '4' in quant_config:
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_use_double_quant=True if quant_config == 'ptsq4bit' else False,
-                bnb_4bit_quant_type='nf4',       # or 'fp4'
-                #bnb_4bit_compute_dtype='float16'
-            )
-        elif '8' in quant_config:
-            bnb_config = BitsAndBytesConfig(
-                load_in_8bit=True,
-                #bnb_4bit_compute_dtype='float16'
-            )
-        
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            quantization_config=bnb_config,
-            device_map='auto',
-            return_dict=True,
-            output_hidden_states=True,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-            trust_remote_code=True
-        )
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            return_dict=True,
-            output_hidden_states=True,
-            low_cpu_mem_usage=True,
-            use_safetensors=True,
-            trust_remote_code=True
-        )
-
-    return model, tok
-
 def plot_sae_heatmap(
         model_path:Any,
         tokenizer_path:Any,
@@ -222,11 +236,12 @@ def plot_sae_heatmap(
         model_precision:Optional[str|None]=None,
         top_k:int=5,
         tokens_per_row:int=12,
-        target_layers:List[int]=[5,10,15],
+        target_layers:List[int]=[5,10,15,25,30],
         model_to_eval:bool=True,
         deterministic_sae:bool=True,
         token_font_size:int=12,
         label_font_size:int=20,
+        model_id:Optional[str|None]=None # 'llama-hf1bitllm'
 ) -> go.Figure:
     """
     Run multi-layer SAE analysis
@@ -250,6 +265,23 @@ def plot_sae_heatmap(
         token_font_size=token_font_size,
         label_font_size=label_font_size,
     )
+
+    if model_id is not None:
+        OUTPUT_DIR = "sae_outputs"
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+        for layer_name, fig in layer_figs:
+            # Clean the layer name to be safe for filenames
+            safe_layer_name = layer_name.replace(" ", "_").lower()
+
+            filename = os.path.join(OUTPUT_DIR, f"{model_id}_sae_{safe_layer_name}.html")
+
+            fig.write_html(
+                file=filename,
+                full_html=True,
+                include_plotlyjs='cdn',
+                config={"responsive": True}
+            )
 
     clear_cuda_cache()
     return [
